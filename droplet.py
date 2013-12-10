@@ -159,35 +159,61 @@ class ColorGradient(object):
 
 if __name__ == '__main__':
 	# Setup environment
+	def rand(val):
+		return val + random.randrange(10, 70)
+		
 	barriers = [
 		# The entry channel
-		[[-100, 100], [100, 100]],
-		[[-100, 50], [100, 50]],
+		[[-100, 200], [100, 200]],
+		[[-100, 150], [100, 150]],
 
 		# The expansion
-		[[100, 100], [200, 150]],
-		[[100, 50], [200, 0]],
+		[[100, 200], [200, 250]],
+		[[100, 150], [200, 100]],
 
 		# The constriction
-		[[200, 150], [300, 100]],
-		[[200, 0], [300, 50]],
+		[[200, 250], [300, 200]],
+		[[200, 100], [300, 150]],
+		
 
-		# The exit channel
-		[[300, 100], [600, 110]],
-		[[300, 50], [600, 40]]
+		[[300, 200], [400, 220]],
+		[[300, 150], [400, 130]],
+
+		[[400, 220], [500, 190]],
+		[[400, 130], [500, 160]],
+
+		[[500, 190], [600, 210]],
+		[[500, 160], [600, 140]],
+
+		[[600, 210], [750, 230]],
+		[[600, 140], [750, 120]],
+
+		[[750, 230], [900, 200]],
+		[[750, 120], [900, 150]],
+
+		[[900, 200], [1050, 300]],
+		[[900, 150], [1050, 50]],
+
+		[[1050, 300], [1250, 200]],
+		[[1050, 50], [1250, 150]]
+
 	]
 
-	start_point = (0, 75)
-	area = 8500.
+	start_point = (-50, 175)
+	direction = (4,0)
+	size = (1200, 400)
+	area = 8000.
 	num_spikes = 100
+	max_dist = 200
 
-	d = DropletAnimation(barriers, start_point, num_spikes = num_spikes, max_dist = 150,
+
+	d = DropletAnimation(barriers, start_point, num_spikes = num_spikes, max_dist = max_dist,
 			area = area)
 
 	max_fps = 40
 	num_frames = 200
 	fpsClock = pygame.time.Clock()
-	window = pygame.display.set_mode((500, 500))
+	window = pygame.display.set_mode(size)
 	pygame.display.set_caption('Droplet Simulation')
 
 	white = pygame.Color(245, 245, 245)
@@ -198,7 +224,6 @@ if __name__ == '__main__':
 	radius = math.sqrt(area/math.pi)
 	circumference = math.pi * 2 * radius
 	relaxed = circumference / num_spikes
-	print relaxed
 	rg = ColorGradient([0, relaxed * 2])
 
 	# The animation loop
@@ -209,7 +234,7 @@ if __name__ == '__main__':
 
 		# Draw all barriers
 		for p1, p2 in barriers:
-			pygame.draw.aaline(window, black, p1, p2, 2)
+			pygame.draw.aaline(window, black, p1, p2, 1)
 
 
 		x,y = d.get_shape()
@@ -222,7 +247,6 @@ if __name__ == '__main__':
 			c = rg.get_color(dist)
 			color =  pygame.Color(int(c[0]), int(c[1]), int(c[2]))
 			pygame.draw.line(window, color, point, next_point, 3)
-
 
 
 		#Show fps
@@ -240,6 +264,12 @@ if __name__ == '__main__':
 		pygame.display.update()
 
 		# Update state of all objects
-		d.move_center_point((1, 0))
+
+		if d.center_point[0] > size[0] + 100:
+			direction = (-4,0)
+		elif d.center_point[0] < -100:
+			direction = (4,0)
+
+		d.move_center_point(direction)
 
 		fpsClock.tick(max_fps)
