@@ -1,9 +1,13 @@
-
 import math, time
 
 import numpy as np
 from matplotlib import pyplot as plt
 from matplotlib import animation
+import pygame
+from pygame.locals import QUIT
+
+pygame.init()
+font = pygame.font.SysFont('helvetica', 25)
 
 def intersect_lines(p1, p2, p3, p4, check_second = True):
 	u = ((p1[0] - p2[0])*(p3[1] - p4[1]) - (p1[1]-p2[1])*(p3[0]-p4[0]))
@@ -128,17 +132,6 @@ class DropletAnimation(object):
 			else:
 				self._max_dist[i] = self.max_len_spike
 
-def update_plot(i, d, droplet):	
-	d.move_center_point((1, 0))
-	d.find_shape(7000)
-	x, y = d.get_shape()
-	offsets = [[x[i], y[i]] for i in xrange(len(x))]
-	droplet.set_offsets(offsets)
-	'''
-		x, y = d.get_max()
-		offsets = [[x[i], y[i]] for i in xrange(len(x))]
-		limits.set_offsets(offsets)
-	'''
 
 if __name__ == '__main__':
 	# Setup environment
@@ -152,37 +145,63 @@ if __name__ == '__main__':
 		[[100, 50], [200, 0]],
 
 		# The constriction
-		[[200, 150], [300, 90]],
+		[[200, 150], [300, 100]],
 		[[200, 0], [300, 50]],
 
 		# The exit channel
-		[[300, 90], [600, 90]],
+		[[300, 100], [600, 110]],
 		[[300, 50], [600, 40]]
 	]
 
-	start_point = (50, 75)
+	start_point = (0, 75)
 
-	# Calc first frame
-	d = DropletAnimation(barriers, start_point, num_spikes = 50, max_dist = 150,
-			area = 7000)
+	num_frames = 200
+	d = DropletAnimation(barriers, start_point, num_spikes = 100, max_dist = 150,
+			area = 8500)
 	d.move_center_point((0,0))
 
-	fig = plt.figure()
+	max_fps = 30
+	fpsClock = pygame.time.Clock()
+	window = pygame.display.set_mode((500, 500))
+	pygame.display.set_caption('Droplet Simulation')
 
-	# Plot all the barriers
-	for p1, p2 in barriers:
-		plt.plot([p1[0], p2[0]], [p1[1], p2[1]], lw = 2, c='black')
+	white = pygame.Color(245, 245, 245)
+	black = pygame.Color(10, 10, 10)
+	blue = pygame.Color(10, 10, 245)
 
-	#backgrounds = fig.canvas.copy_from_bbox(ax.bbox)
+	# The animation loop
+	i=0
+	while i < num_frames:
+		i += 1
+		window.fill(white)
 
-	x, y = d.get_shape()
-	droplet = plt.scatter(x, y, s=10, c='red')
+		# Draw all barriers
+		for p1, p2 in barriers:
+			pygame.draw.aaline(window, black, p1, p2, 2)
 
-	'''
-		x, y = d.get_max()
-		limits = plt.scatter(x, y, s=10, c='blue')
-	'''
+		# Show fps
+		x,y = d.get_shape()
+		all_points = [[x[i], y[i]] for i in xrange(d.num_spikes)]
+		for i, point in enumerate(all_points):
+			next_point = all_points[(i + 1)%d.num_spikes]
+			pygame.draw.line(window, blue, point, next_point, 3)
 
-	ani = animation.FuncAnimation(fig, update_plot, fargs=(d, droplet))
-	plt.axis('equal')
-	plt.show()
+
+		#Show fps
+		label = font.render(str(int(fpsClock.get_fps())), 1, black)
+		rect = label.get_rect()
+		rect.center = (20, 20)
+		window.blit(label, rect)
+
+		#Handle events (single press, not hold)
+		for event in pygame.event.get():
+			if event.type == QUIT:
+				pygame.quit()
+				break
+
+		pygame.display.update()
+
+		# Update state of all objects
+		d.move_center_point((1, 0))
+
+		fpsClock.tick(max_fps)
