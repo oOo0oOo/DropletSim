@@ -48,12 +48,14 @@ class Environment(object):
 		self._lines = np.array(lines)
 
 	def closest_intersect(self):
-		for p1, p2 in 
-		x = (p1[0]*p2[1] - p1[1]*p2[0])*(p3[0] - p4[0]) - (p1[0] - p2[0])*(p3[0]*p4[1] - p3[1]*p4[0])
-		x /= ((p1[0] - p2[0])*(p3[1] - p4[1]) - (p1[1]-p2[1])*(p3[0]-p4[0]))
+		for p1, p2 in self._lines:
+			x = (p1[0]*p2[1] - p1[1]*p2[0])*(p3[0] - p4[0]) - (p1[0] - p2[0])*(p3[0]*p4[1] - p3[1]*p4[0])
+			x /= ((p1[0] - p2[0])*(p3[1] - p4[1]) - (p1[1]-p2[1])*(p3[0]-p4[0]))
 
-		y = ((p1[0]*p2[1] - p1[1]*p2[0])*(p3[1] - p4[1])) - ((p1[1] - p2[1])*(p3[0]*p4[1] - p3[1]*p4[0]))
-		y /= ((p1[0] - p2[0])*(p3[1] - p4[1]) - (p1[1]-p2[1])*(p3[0]-p4[0]))
+			y = ((p1[0]*p2[1] - p1[1]*p2[0])*(p3[1] - p4[1])) - ((p1[1] - p2[1])*(p3[0]*p4[1] - p3[1]*p4[0]))
+			y /= ((p1[0] - p2[0])*(p3[1] - p4[1]) - (p1[1]-p2[1])*(p3[0]-p4[0]))
+
+			print x, y
 
 
 
@@ -61,7 +63,7 @@ if __name__ == '__main__':
 	# Setup environment
 	lines = [
 		[[10, 10], [100, 10]],
-		[[10, 50], [100, 50]],
+		[[10, 30], [100, 40]],
 
 	]
 	
@@ -69,7 +71,7 @@ if __name__ == '__main__':
 
 	# Setup droplet
 	d = Droplet()
-	num = d.find_shape(100)
+	num = d.find_shape(5000)
 	#print 'Needed {} runs'.format(num)
 	#assert d.get_area() == d.get_area_pure()
 
