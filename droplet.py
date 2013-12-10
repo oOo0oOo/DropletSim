@@ -72,6 +72,7 @@ class DropletAnimation(object):
 		for i, p in enumerate(self._spikes):
 			x.append((p * math.cos(i*self._angle)) + self.center_point[0])
 			y.append((p * math.sin(i*self._angle)) + self.center_point[1])
+
 		return x, y
 
 	def get_max(self):
@@ -95,7 +96,7 @@ class DropletAnimation(object):
 			n  = 0
 			while v < self.area:
 				n += 1
-				d.move_up_spikes(1)
+				d.move_up_spikes(0.5)
 				v = d.get_area()
 			return n
 		else:
@@ -132,6 +133,29 @@ class DropletAnimation(object):
 			else:
 				self._max_dist[i] = self.max_len_spike
 
+class ColorGradient(object):
+	def __init__(self, extremes = [5, 100],
+		low_color = [245, 10, 10], high_color = [10, 245, 10]):
+
+		self.extremes = extremes
+		self.low = np.array(low_color)
+		self.high = np.array(high_color)
+
+		# The increment
+		absolut = self.high - self.low
+		diff = self.extremes[1] - self.extremes[0]
+		self._per_unit = absolut / diff
+	
+	def get_color(self, value):
+		if value <= self.extremes[0]:
+			return self.low
+		elif value >= self.extremes[1]:
+			return self.high
+		else:
+			corr = value - self.extremes[0]
+			return np.round(self.low + (self._per_unit * corr))
+
+
 
 if __name__ == '__main__':
 	# Setup environment
@@ -154,13 +178,14 @@ if __name__ == '__main__':
 	]
 
 	start_point = (0, 75)
+	area = 8500.
+	num_spikes = 100
 
+	d = DropletAnimation(barriers, start_point, num_spikes = num_spikes, max_dist = 150,
+			area = area)
+
+	max_fps = 40
 	num_frames = 200
-	d = DropletAnimation(barriers, start_point, num_spikes = 100, max_dist = 150,
-			area = 8500)
-	d.move_center_point((0,0))
-
-	max_fps = 30
 	fpsClock = pygame.time.Clock()
 	window = pygame.display.set_mode((500, 500))
 	pygame.display.set_caption('Droplet Simulation')
@@ -168,6 +193,13 @@ if __name__ == '__main__':
 	white = pygame.Color(245, 245, 245)
 	black = pygame.Color(10, 10, 10)
 	blue = pygame.Color(10, 10, 245)
+
+	# set up the color scheme (3D Fade)
+	radius = math.sqrt(area/math.pi)
+	circumference = math.pi * 2 * radius
+	relaxed = circumference / num_spikes
+	print relaxed
+	rg = ColorGradient([0, relaxed * 2])
 
 	# The animation loop
 	i=0
@@ -179,12 +211,18 @@ if __name__ == '__main__':
 		for p1, p2 in barriers:
 			pygame.draw.aaline(window, black, p1, p2, 2)
 
-		# Show fps
+
 		x,y = d.get_shape()
 		all_points = [[x[i], y[i]] for i in xrange(d.num_spikes)]
 		for i, point in enumerate(all_points):
 			next_point = all_points[(i + 1)%d.num_spikes]
-			pygame.draw.line(window, blue, point, next_point, 3)
+			# get color according to scheme
+			vect = [next_point[0] - point[0], next_point[1] - point[1]]
+			dist = math.sqrt((vect[0]**2) + (vect[1]**2))
+			c = rg.get_color(dist)
+			color =  pygame.Color(int(c[0]), int(c[1]), int(c[2]))
+			pygame.draw.line(window, color, point, next_point, 3)
+
 
 
 		#Show fps
