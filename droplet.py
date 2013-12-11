@@ -1,31 +1,34 @@
 import math, random
 
 import numpy as np
-from matplotlib import pyplot as plt
-from matplotlib import animation
 import pygame
 from pygame.locals import QUIT, KEYDOWN, K_LEFT, K_RIGHT, K_UP, K_DOWN
 
 pygame.init()
 font = pygame.font.SysFont('helvetica', 25)
 
-def intersect_lines(p1, p2, p3, p4, check_second = True):
-	u = ((p1[0] - p2[0])*(p3[1] - p4[1]) - (p1[1]-p2[1])*(p3[0]-p4[0]))
+el_1 = 0.99
+el_2 = 2-el_1
+
+def intersect_lines(p1, p2, p3, p4):
+	p43_x = (p3[0] - p4[0])
+	p43_y = (p3[1] - p4[1])
+	p21_x = (p1[0] - p2[0])
+	p21_y = (p1[1] - p2[1])
+
+	u = (p21_x * p43_y - p21_y * p43_x)
 	
 	if u > 0:
-		x = (p1[0]*p2[1] - p1[1]*p2[0])*(p3[0] - p4[0]) - (p1[0] - p2[0])*(p3[0]*p4[1] - p3[1]*p4[0])
-		x /= u
-		y = ((p1[0]*p2[1] - p1[1]*p2[0])*(p3[1] - p4[1])) - ((p1[1] - p2[1])*(p3[0]*p4[1] - p3[1]*p4[0]))
-		y /= u
+		a = (p3[0]*p4[1] - p3[1]*p4[0])
+		b = (p1[0]*p2[1] - p1[1]*p2[0])
+
+		x = (b * p43_x - p21_x * a) / u
+		y = (b * p43_y - p21_y * a) / u
 
 		# Check if on second line segment or outside
 		# Not very versatile...
-		if check_second:
-			# give it some elasticity
-			f = 0.99
-			if min(p3[0], p4[0]) * f <= x <= max(p3[0], p4[0]) * (2-f) and min(p3[1], p4[1]) * f <= y <= max(p3[1], p4[1]) * (2-f):
-				return [x, y]
-		else:
+		# give it some elasticity
+		if min(p3[0], p4[0]) * el_1 <= x <= max(p3[0], p4[0]) * el_2 and min(p3[1], p4[1]) * el_1 <= y <= max(p3[1], p4[1]) * el_2:
 			return [x, y]
 
 	return False
@@ -67,6 +70,11 @@ class DropletAnimation(object):
 		self.reset_max_dist()
 		self.find_shape()
 
+	def relax(self, step_size = 0.5):
+		c = self.center_point
+		s = self.stress_vector(step_size)
+		self.move_center_point((s[0] - c[0], s[1] - c[1]))
+
 	def get_shape(self):
 		x, y = [], []
 		for i, p in enumerate(self._spikes):
@@ -86,19 +94,18 @@ class DropletAnimation(object):
 		return np.sum(self._max_dist * np.roll(self._max_dist, 1) * self._mult_term)
 
 	def find_shape(self, point = False):
-		self._spikes = np.array([0.1 for i in xrange(self.num_spikes)])
+		self._spikes[:] = 0.1
 
 		if point and type(point) == tuple and len(point) == 2:
 			self.center_point = point
 
 		if self.area < self.get_max_area():
-			v = d.get_area()
-			n  = 0
+			v = self.get_area()
 			while v < self.area:
-				n += 1
-				d.move_up_spikes(0.5)
-				v = d.get_area()
-			return n
+				step = (self.area - v) / self.area
+				if step < 0.5: step = 0.5
+				self.move_up_spikes(step)
+				v = self.get_area()
 		else:
 			print 'Area too large!!'
 			self._spikes = np.copy(self._max_dist)
@@ -115,6 +122,7 @@ class DropletAnimation(object):
 			inter = False
 
 			for p1, p2 in self.barriers:
+				#Check on which side of the line the point is
 				if ((p2[0] - p1[0])*(cp[1] - p1[1]) - (p2[1] - p1[1])*(cp[0] - p1[0])) > 0:
 					p_inter = intersect_lines(cp, outer, p1, p2)
 				else:
@@ -133,12 +141,19 @@ class DropletAnimation(object):
 			else:
 				self._max_dist[i] = self.max_len_spike
 
-
 	def geometrical_center(self):
 		x, y = self.get_shape()
 		points = np.array([[x[i], y[i]] for i in xrange(self.num_spikes)])
 		pos = np.sum(points, 0) * (1.0 / self.num_spikes) 
-		return (int(pos[0]), int(pos[1]))
+		return (pos[0], pos[1])
+
+	def stress_vector(self, ratio = 1):
+		centroid = self.geometrical_center()
+		center = self.center_point
+		vect = (centroid[0] - center[0], centroid[1] - center [1])
+		x = float(center[0] + ratio * vect[0])
+		y = float(center[1] + ratio * vect[1])
+		return (x, y)
 
 class ColorGradient(object):
 	def __init__(self, extremes = [5, 100],
@@ -162,7 +177,8 @@ class ColorGradient(object):
 			corr = value - self.extremes[0]
 			return np.round(self.low + (self._per_unit * corr))
 
-
+def intify(tup):
+	return tuple([int(round(t)) for t in tup])
 
 if __name__ == '__main__':
 	# Setup environment
@@ -170,15 +186,13 @@ if __name__ == '__main__':
 	rand = [random.randrange(12, 60) for i in range(15)]
 		
 	barriers = [
-		# The entry channel
+		# Some channel walls
 		[[-100, 200 + rand[0]], [100, 200 + rand[1]]],
 		[[-100, 200 - rand[0]], [100, 200 - rand[1]]],
 
-		# The expansion
 		[[100, 200 + rand[1]], [200, 200 + rand[2]]],
 		[[100, 200 - rand[1]], [200, 200 - rand[2]]],
 
-		# The constriction
 		[[200, 200 + rand[2]], [300, 200 + rand[3]]],
 		[[200, 200 - rand[2]], [300, 200 - rand[3]]],
 
@@ -191,33 +205,33 @@ if __name__ == '__main__':
 		[[500, 200 + rand[5]], [600, 200 + rand[6]]],
 		[[500, 200 - rand[5]], [600, 200 - rand[6]]],
 
-		[[600, 200 + rand[6]], [750, 200 + rand[7]]],
-		[[600, 200 - rand[6]], [750, 200 - rand[7]]],
+		[[600, 200 + rand[6]], [700, 200 + rand[7]]],
+		[[600, 200 - rand[6]], [700, 200 - rand[7]]],
 
-		[[750, 200 + rand[7]], [900, 200 + rand[8]]],
-		[[750, 200 - rand[7]], [900, 200 - rand[8]]],
+		[[700, 200 + rand[7]], [800, 200 + rand[8]]],
+		[[700, 200 - rand[7]], [800, 200 - rand[8]]],
 
-		[[900, 200 + rand[8]], [1050, 200 + rand[9]]],
-		[[900, 200 - rand[8]], [1050, 200 - rand[9]]],
+		[[800, 200 + rand[8]], [900, 200 + rand[9]]],
+		[[800, 200 - rand[8]], [900, 200 - rand[9]]],
 
-		[[1050, 200 + rand[9]], [1250, 200 + rand[10]]],
-		[[1050, 200 - rand[9]], [1250, 200 - rand[10]]]
+		[[900, 200 + rand[9]], [1000, 200 + rand[10]]],
+		[[900, 200 - rand[9]], [1000, 200 - rand[10]]],
+
+		[[1000, 200 + rand[10]], [1200, 200 + rand[11]]],
+		[[1000, 200 - rand[10]], [1200, 200 - rand[11]]]
 
 	]
 
-	start_point = (1, 200)
-	direction = (3,0)
 	size = (1200, 400)
+	start_point = (size[0]/2, 200)
 	area = 8000.
-	num_spikes = 100
+	num_spikes = 250
 	max_dist = 200
-
+	max_fps = 150
 
 	d = DropletAnimation(barriers, start_point, num_spikes = num_spikes, max_dist = max_dist,area = area)
 	d.move_center_point((0, 0))
 
-	max_fps = 50
-	num_frames = 200
 	fpsClock = pygame.time.Clock()
 	window = pygame.display.set_mode(size)
 	pygame.display.set_caption('Droplet Simulation')
@@ -234,29 +248,18 @@ if __name__ == '__main__':
 	rg = ColorGradient([0.5, relaxed * 2], (245, 50, 50), (50, 245, 50))
 
 	# The animation loop
-	i=0
-	while i < num_frames:
-		i += 1
+	while True:
 		window.fill(white)
 
 		# Draw all barriers
 		for p1, p2 in barriers:
 			pygame.draw.aaline(window, black, p1, p2, 1)
 
-
 		# Draw center point, centroid & stress vector
-		center = d.center_point
-		centroid = d.geometrical_center()
-
-		ratio = 4
-		vect = (centroid[0] - center[0], centroid[1] - center [1])
-		x = float(center[0] + ratio * vect[0])
-		y = float(center[1] + ratio * vect[1])
-
+		center = intify(d.center_point)
 		pygame.draw.circle(window, blue, center, 3)
-		pygame.draw.circle(window, black, centroid, 3)
-		pygame.draw.aaline(window, red, center, (x, y), 1)
-
+		#stress = intify(d.stress_vector())
+		#pygame.draw.line(window, red, center, stress, 3)
 
 		#Draw boundary
 		x,y = d.get_shape()
@@ -266,15 +269,19 @@ if __name__ == '__main__':
 			# get color according to scheme
 			vect = [next_point[0] - point[0], next_point[1] - point[1]]
 			dist = math.sqrt((vect[0]**2) + (vect[1]**2))
-			c = rg.get_color(dist)
-			color =  pygame.Color(int(c[0]), int(c[1]), int(c[2]))
+			c = intify(rg.get_color(dist))
+			color =  pygame.Color(c[0], c[1], c[2])
 			pygame.draw.line(window, color, point, next_point, 3)
 
 
-		#Show fps
-		label = font.render(str(int(fpsClock.get_fps())), 1, black)
+		#Show statistics
+		c = d.center_point
+		s = d.stress_vector(1)
+		vect = round(math.sqrt((s[0] - c[0]) ** 2 + (s[1] - c[1]) ** 2), 1)
+		text = 'Speed: ' + str(int(fpsClock.get_fps())) + ' fps    Stress: ' + str(vect)
+		label = font.render(text, 1, black)
 		rect = label.get_rect()
-		rect.center = (20, 20)
+		rect.center = (size[0]/2, 20)
 		window.blit(label, rect)
 
 		#Handle events (single press, not hold)
@@ -290,16 +297,18 @@ if __name__ == '__main__':
 		keys = pygame.key.get_pressed()
 		direction = False
 		if keys[K_LEFT]:
-			direction = (-3, 0)
+			direction = (-4, 0)
 		if keys[K_RIGHT]:
-			direction = (3, 0)
+			direction = (4, 0)
 		if keys[K_UP]:
-			direction = (0, -3)
+			direction = (0, -4)
 		if keys[K_DOWN]:
-			direction = (0, 3)
+			direction = (0, 4)
 
 		if direction:
 			# Update state of all objects
 			d.move_center_point(direction)
+		else:
+			d.relax()
 
 		fpsClock.tick(max_fps)
