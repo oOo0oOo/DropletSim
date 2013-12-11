@@ -238,7 +238,7 @@ def intify(tup):
 if __name__ == '__main__':
 	# Setup environment
 
-	rand = [random.randrange(0, 60) for i in range(25)]
+	rand = [random.randrange(10, 60) for i in range(25)]
 		
 	barriers = [
 		# Some channel walls
@@ -361,6 +361,5 @@ if __name__ == '__main__':
 			d.move_relax(direction, 0.3)
 		else:
 			d.move_center_point(direction)
-
 
 		fpsClock.tick(max_fps)
