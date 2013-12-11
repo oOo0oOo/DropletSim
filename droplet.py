@@ -1,5 +1,5 @@
 import math, random
-
+import copy
 import numpy as np
 import pygame
 from pygame.locals import QUIT, KEYDOWN, K_LEFT, K_RIGHT, K_UP, K_DOWN
@@ -7,7 +7,7 @@ from pygame.locals import QUIT, KEYDOWN, K_LEFT, K_RIGHT, K_UP, K_DOWN
 pygame.init()
 font = pygame.font.SysFont('helvetica', 25)
 
-el_1 = 0.99
+el_1 = 0.999
 el_2 = 2-el_1
 
 def intersect_lines(p1, p2, p3, p4):
@@ -46,6 +46,14 @@ class DropletAnimation(object):
 		self._mult_term = math.sin(self._angle) * 0.5
 		self._max_dist = np.copy(self._spikes)
 
+		self._center_point = np.array(start_point)
+		self._barriers = np.array(copy.deepcopy(barriers))
+		self._angle_list = np.array([i * self._angle for i in xrange(num_spikes)])
+
+		self._outer_x = np.cos(self._angle_list) * self.max_len_spike
+		self._outer_y = np.sin(self._angle_list) * self.max_len_spike
+		self._outer = np.array(zip(self._outer_x, self._outer_y))
+
 	def get_diameter(self):
 		return 2 * sum(self._spikes)/self.num_spikes
 
@@ -69,6 +77,11 @@ class DropletAnimation(object):
 		self.center_point = (cp[0] + t[0], cp[1] + t[1])
 		self.reset_max_dist()
 		self.find_shape()
+
+	def move_relax(self, t, ratio):
+		cp = self.center_point
+		s = self.stress_vector(ratio)
+		self.move_center_point((s[0] - cp[0] + t[0], s[1] - cp[1] + t[1]))
 
 	def relax(self, step_size = 0.5):
 		c = self.center_point
@@ -103,12 +116,58 @@ class DropletAnimation(object):
 			v = self.get_area()
 			while v < self.area:
 				step = (self.area - v) / self.area
-				if step < 0.5: step = 0.5
+				if step < 0.3: step = 0.3
 				self.move_up_spikes(step)
 				v = self.get_area()
 		else:
 			print 'Area too large!!'
 			self._spikes = np.copy(self._max_dist)
+
+
+	def reset_max_dist_matrices(self):
+		cp = np.array(self.center_point)
+
+		# All the extreme points
+		extreme_points = self._outer + cp
+
+		for i, outer in enumerate(extreme_points):
+			len_inter = self.max_len_spike
+
+			for p1, p2 in self._barriers:
+				# | x2-x1  x3-x1 |
+				# | y2-y1  y3-y1 |
+				matrix = np.vstack([p2-p1, outer-p1])
+				orientation = np.linalg.det(matrix)
+
+				if orientation < 0:
+					first = cp
+					second = outer
+				else:
+					first = outer
+					second = cp
+
+				da = second-first
+				db = p2-p1
+				dp = first-p1
+
+				# Do dot products
+				dap = np.empty_like(da)
+				dap[0] = -da[1]
+				dap[1] = da[0]
+				denom = np.dot( dap, db)
+				num = np.dot( dap, dp )
+
+				if denom > 0 and num > 0:
+					p_inter = (num / denom)*db + p1
+
+					if min(p1[0], p2[0]) * el_1 <= p_inter[0] <= max(p1[0], p2[0]) * el_2 and min(p1[1], p2[1]) * el_1 <= p_inter[1] <= max(p1[1], p2[1]) * el_2:
+						# calculate distance to intersection point
+						vect = [p_inter[0] - cp[0], p_inter[1] - cp[1]]
+						dist = math.sqrt((vect[0]**2) + (vect[1]**2))
+						if dist < len_inter:
+							len_inter = dist
+
+			self._max_dist[i] = len_inter
 
 	def reset_max_dist(self):
 		cp = self.center_point
@@ -134,12 +193,8 @@ class DropletAnimation(object):
 					dist = math.sqrt((vect[0]**2) + (vect[1]**2))
 					if dist < len_inter:
 						len_inter = dist
-						inter = p_inter
 
-			if inter:
-				self._max_dist[i] = len_inter
-			else:
-				self._max_dist[i] = self.max_len_spike
+			self._max_dist[i] = len_inter
 
 	def geometrical_center(self):
 		x, y = self.get_shape()
@@ -183,13 +238,10 @@ def intify(tup):
 if __name__ == '__main__':
 	# Setup environment
 
-	rand = [random.randrange(12, 60) for i in range(15)]
+	rand = [random.randrange(10, 50) for i in range(15)]
 		
 	barriers = [
 		# Some channel walls
-		[[-100, 200 + rand[0]], [100, 200 + rand[1]]],
-		[[-100, 200 - rand[0]], [100, 200 - rand[1]]],
-
 		[[100, 200 + rand[1]], [200, 200 + rand[2]]],
 		[[100, 200 - rand[1]], [200, 200 - rand[2]]],
 
@@ -217,17 +269,15 @@ if __name__ == '__main__':
 		[[900, 200 + rand[9]], [1000, 200 + rand[10]]],
 		[[900, 200 - rand[9]], [1000, 200 - rand[10]]],
 
-		[[1000, 200 + rand[10]], [1200, 200 + rand[11]]],
-		[[1000, 200 - rand[10]], [1200, 200 - rand[11]]]
-
 	]
 
 	size = (1200, 400)
 	start_point = (size[0]/2, 200)
+	direction = (3, 0)
 	area = 8000.
 	num_spikes = 250
 	max_dist = 200
-	max_fps = 150
+	max_fps = 30
 
 	d = DropletAnimation(barriers, start_point, num_spikes = num_spikes, max_dist = max_dist,area = area)
 	d.move_center_point((0, 0))
@@ -295,20 +345,22 @@ if __name__ == '__main__':
 		#Move it
 		# Check for pressed leaning keys
 		keys = pygame.key.get_pressed()
-		direction = False
+		not_here = False
 		if keys[K_LEFT]:
-			direction = (-4, 0)
+			direction = (-5, 0)
 		if keys[K_RIGHT]:
-			direction = (4, 0)
+			direction = (5, 0)
 		if keys[K_UP]:
-			direction = (0, -4)
+			direction = (0, -5)
 		if keys[K_DOWN]:
-			direction = (0, 4)
-
-		if direction:
-			# Update state of all objects
-			d.move_center_point(direction)
+			direction = (0, 5)
 		else:
-			d.relax()
+			not_here = True
+
+		if not_here:
+			d.move_relax(direction, 0.3)
+		else:
+			d.move_center_point(direction)
+
 
 		fpsClock.tick(max_fps)
