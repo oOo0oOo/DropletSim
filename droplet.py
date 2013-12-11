@@ -1,10 +1,10 @@
-import math, time
+import math, random
 
 import numpy as np
 from matplotlib import pyplot as plt
 from matplotlib import animation
 import pygame
-from pygame.locals import QUIT
+from pygame.locals import QUIT, KEYDOWN, K_LEFT, K_RIGHT, K_UP, K_DOWN
 
 pygame.init()
 font = pygame.font.SysFont('helvetica', 25)
@@ -133,6 +133,13 @@ class DropletAnimation(object):
 			else:
 				self._max_dist[i] = self.max_len_spike
 
+
+	def geometrical_center(self):
+		x, y = self.get_shape()
+		points = np.array([[x[i], y[i]] for i in xrange(self.num_spikes)])
+		pos = np.sum(points, 0) * (1.0 / self.num_spikes) 
+		return (int(pos[0]), int(pos[1]))
+
 class ColorGradient(object):
 	def __init__(self, extremes = [5, 100],
 		low_color = [245, 10, 10], high_color = [10, 245, 10]):
@@ -159,58 +166,57 @@ class ColorGradient(object):
 
 if __name__ == '__main__':
 	# Setup environment
-	def rand(val):
-		return val + random.randrange(10, 70)
+
+	rand = [random.randrange(12, 60) for i in range(15)]
 		
 	barriers = [
 		# The entry channel
-		[[-100, 230], [100, 200]],
-		[[-100, 120], [100, 150]],
+		[[-100, 200 + rand[0]], [100, 200 + rand[1]]],
+		[[-100, 200 - rand[0]], [100, 200 - rand[1]]],
 
 		# The expansion
-		[[100, 200], [200, 250]],
-		[[100, 150], [200, 100]],
+		[[100, 200 + rand[1]], [200, 200 + rand[2]]],
+		[[100, 200 - rand[1]], [200, 200 - rand[2]]],
 
 		# The constriction
-		[[200, 250], [300, 200]],
-		[[200, 100], [300, 150]],
-		
+		[[200, 200 + rand[2]], [300, 200 + rand[3]]],
+		[[200, 200 - rand[2]], [300, 200 - rand[3]]],
 
-		[[300, 200], [400, 220]],
-		[[300, 150], [400, 130]],
+		[[300, 200 + rand[3]], [400, 200 + rand[4]]],
+		[[300, 200 - rand[3]], [400, 200 - rand[4]]],
 
-		[[400, 220], [500, 190]],
-		[[400, 130], [500, 160]],
+		[[400, 200 + rand[4]], [500, 200 + rand[5]]],
+		[[400, 200 - rand[4]], [500, 200 - rand[5]]],
 
-		[[500, 190], [600, 210]],
-		[[500, 160], [600, 140]],
+		[[500, 200 + rand[5]], [600, 200 + rand[6]]],
+		[[500, 200 - rand[5]], [600, 200 - rand[6]]],
 
-		[[600, 210], [750, 230]],
-		[[600, 140], [750, 120]],
+		[[600, 200 + rand[6]], [750, 200 + rand[7]]],
+		[[600, 200 - rand[6]], [750, 200 - rand[7]]],
 
-		[[750, 230], [900, 200]],
-		[[750, 120], [900, 150]],
+		[[750, 200 + rand[7]], [900, 200 + rand[8]]],
+		[[750, 200 - rand[7]], [900, 200 - rand[8]]],
 
-		[[900, 200], [1050, 250]],
-		[[900, 150], [1050, 100]],
+		[[900, 200 + rand[8]], [1050, 200 + rand[9]]],
+		[[900, 200 - rand[8]], [1050, 200 - rand[9]]],
 
-		[[1050, 250], [1250, 200]],
-		[[1050, 100], [1250, 150]]
+		[[1050, 200 + rand[9]], [1250, 200 + rand[10]]],
+		[[1050, 200 - rand[9]], [1250, 200 - rand[10]]]
 
 	]
 
-	start_point = (-50, 175)
-	direction = (4,0)
+	start_point = (1, 200)
+	direction = (3,0)
 	size = (1200, 400)
 	area = 8000.
 	num_spikes = 100
 	max_dist = 200
 
 
-	d = DropletAnimation(barriers, start_point, num_spikes = num_spikes, max_dist = max_dist,
-			area = area)
+	d = DropletAnimation(barriers, start_point, num_spikes = num_spikes, max_dist = max_dist,area = area)
+	d.move_center_point((0, 0))
 
-	max_fps = 40
+	max_fps = 50
 	num_frames = 200
 	fpsClock = pygame.time.Clock()
 	window = pygame.display.set_mode(size)
@@ -219,12 +225,13 @@ if __name__ == '__main__':
 	white = pygame.Color(245, 245, 245)
 	black = pygame.Color(10, 10, 10)
 	blue = pygame.Color(10, 10, 245)
+	red = pygame.Color(245, 10, 10)
 
 	# set up the color scheme (3D Fade)
 	radius = math.sqrt(area/math.pi)
 	circumference = math.pi * 2 * radius
 	relaxed = circumference / num_spikes
-	rg = ColorGradient([0, relaxed * 2])
+	rg = ColorGradient([0.5, relaxed * 2], (245, 50, 50), (50, 245, 50))
 
 	# The animation loop
 	i=0
@@ -237,6 +244,21 @@ if __name__ == '__main__':
 			pygame.draw.aaline(window, black, p1, p2, 1)
 
 
+		# Draw center point, centroid & stress vector
+		center = d.center_point
+		centroid = d.geometrical_center()
+
+		ratio = 4
+		vect = (centroid[0] - center[0], centroid[1] - center [1])
+		x = float(center[0] + ratio * vect[0])
+		y = float(center[1] + ratio * vect[1])
+
+		pygame.draw.circle(window, blue, center, 3)
+		pygame.draw.circle(window, black, centroid, 3)
+		pygame.draw.aaline(window, red, center, (x, y), 1)
+
+
+		#Draw boundary
 		x,y = d.get_shape()
 		all_points = [[x[i], y[i]] for i in xrange(d.num_spikes)]
 		for i, point in enumerate(all_points):
@@ -263,13 +285,21 @@ if __name__ == '__main__':
 
 		pygame.display.update()
 
-		# Update state of all objects
+		#Move it
+		# Check for pressed leaning keys
+		keys = pygame.key.get_pressed()
+		direction = False
+		if keys[K_LEFT]:
+			direction = (-3, 0)
+		if keys[K_RIGHT]:
+			direction = (3, 0)
+		if keys[K_UP]:
+			direction = (0, -3)
+		if keys[K_DOWN]:
+			direction = (0, 3)
 
-		if d.center_point[0] > size[0] + 100:
-			direction = (-4,0)
-		elif d.center_point[0] < -100:
-			direction = (6,0)
-
-		d.move_center_point(direction)
+		if direction:
+			# Update state of all objects
+			d.move_center_point(direction)
 
 		fpsClock.tick(max_fps)
