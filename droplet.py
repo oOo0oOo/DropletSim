@@ -1,8 +1,14 @@
 import math, random
-import copy
 import numpy as np
 import pygame
 from pygame.locals import QUIT, KEYDOWN, K_LEFT, K_RIGHT, K_UP, K_DOWN
+
+
+# The C speedup
+from c_code import intersect_lines as intersect
+from c_code import distance
+
+#from shapely.geometry import LineString, Point, MultiLineString
 
 pygame.init()
 font = pygame.font.SysFont('helvetica', 25)
@@ -40,19 +46,26 @@ class DropletAnimation(object):
 		self.num_spikes = num_spikes
 		self.area = area
 		self.max_len_spike = max_dist
+		self.buffer_distance = 2
 
 		self._spikes = np.array([0.1 for i in xrange(self.num_spikes)])
 		self._angle = math.radians(360. / self.num_spikes)
 		self._mult_term = math.sin(self._angle) * 0.5
 		self._max_dist = np.copy(self._spikes)
 
-		self._center_point = np.array(start_point)
-		self._barriers = np.array(copy.deepcopy(barriers))
-		self._angle_list = np.array([i * self._angle for i in xrange(num_spikes)])
-
-		self._outer_x = np.cos(self._angle_list) * self.max_len_spike
-		self._outer_y = np.sin(self._angle_list) * self.max_len_spike
-		self._outer = np.array(zip(self._outer_x, self._outer_y))
+		# Matrix approach
+		'''
+			self._center_point = np.array(start_point)
+			self._barriers = np.array(barriers)
+			self._angle_list = np.array([i * self._angle for i in xrange(num_spikes)])
+			self._outer_x = np.cos(self._angle_list) * self.max_len_spike
+			self._outer_y = np.sin(self._angle_list) * self.max_len_spike
+			self._outer = np.array(zip(self._outer_x, self._outer_y))
+	
+			# Shapely approach
+			self._barriers_shapely = MultiLineString(barriers)
+			self._barriers_buffered = self._barriers_shapely.buffer(self.buffer_distance)
+		'''
 
 	def get_diameter(self):
 		return 2 * sum(self._spikes)/self.num_spikes
@@ -123,6 +136,63 @@ class DropletAnimation(object):
 			print 'Area too large!!'
 			self._spikes = np.copy(self._max_dist)
 
+	def reset_max_dist(self):
+		cp = self.center_point
+
+		for i in xrange(self.num_spikes):
+			x = (self.max_len_spike * math.cos(i*self._angle)) + cp[0]
+			y = (self.max_len_spike * math.sin(i*self._angle)) + cp[1]
+			outer = (x, y)
+
+			len_inter = self.max_len_spike
+			inter = False
+
+			for p1, p2 in self.barriers:
+				#Check on which side of the line the point is & call cython optimized function
+				if ((p2[0] - p1[0])*(cp[1] - p1[1]) - (p2[1] - p1[1])*(cp[0] - p1[0])) > 0:
+					p_inter = intersect(cp[0], cp[1], outer[0], outer[1], p1[0], p1[1], p2[0], p2[1])
+				else:
+					p_inter = intersect(outer[0], outer[1], cp[0], cp[1], p1[0], p1[1], p2[0], p2[1])
+
+				if p_inter:
+					dist = distance(p_inter[0], p_inter[1], cp[0], cp[1])
+
+					if dist < len_inter:
+						len_inter = dist
+
+			self._max_dist[i] = len_inter
+
+
+	def reset_max_dist_shapely(self):
+		cp = self.center_point
+
+		for i in xrange(self.num_spikes):
+			x = (self.max_len_spike * math.cos(i*self._angle)) + cp[0]
+			y = (self.max_len_spike * math.sin(i*self._angle)) + cp[1]
+			outer = Point(x,y)
+			spike = LineString(((x, y), self.center_point))
+
+			p_inter = self._barriers_shapely.intersection(spike)
+
+			dist = False
+
+			if type(p_inter) == Point:
+				if p_inter.within(self._barriers_buffered):
+					dist = outer.distance(p_inter)
+			else:
+				dists = [outer.distance(p) for p in p_inter if p.within(self._barriers_buffered)]
+				if dists:
+					dist = min(dists)
+
+			if dist:
+				if dist < self.max_len_spike:
+					self._max_dist[i] = dist
+				else:
+					self._max_dist[i] = self.max_len_spike
+			
+			else:
+				self._max_dist[i] = self.max_len_spike
+
 
 	def reset_max_dist_matrices(self):
 		cp = np.array(self.center_point)
@@ -169,7 +239,8 @@ class DropletAnimation(object):
 
 			self._max_dist[i] = len_inter
 
-	def reset_max_dist(self):
+
+	def reset_max_dist_old(self):
 		cp = self.center_point
 
 		for i in xrange(self.num_spikes):
@@ -277,7 +348,7 @@ if __name__ == '__main__':
 	area = 8000.
 	num_spikes = 250
 	max_dist = 200
-	max_fps = 30
+	max_fps = 250
 
 	d = DropletAnimation(barriers, start_point, num_spikes = num_spikes, max_dist = max_dist,area = area)
 	d.move_center_point((0, 0))
@@ -317,8 +388,7 @@ if __name__ == '__main__':
 		for i, point in enumerate(all_points):
 			next_point = all_points[(i + 1)%d.num_spikes]
 			# get color according to scheme
-			vect = [next_point[0] - point[0], next_point[1] - point[1]]
-			dist = math.sqrt((vect[0]**2) + (vect[1]**2))
+			dist = distance(point[0], point[1], next_point[0], next_point[1])
 			c = intify(rg.get_color(dist))
 			color =  pygame.Color(c[0], c[1], c[2])
 			pygame.draw.line(window, color, point, next_point, 3)
