@@ -6,7 +6,7 @@ from pygame.locals import QUIT, KEYDOWN, K_LEFT, K_RIGHT, K_UP, K_DOWN
 
 # The C speedup
 from c_code import intersect_lines as intersect
-from c_code import distance, find_max_dist, downsample
+from c_code import distance, find_max_dist, downsample, find_shape_multiple
 
 #from shapely.geometry import LineString, Point, MultiLineString
 
@@ -27,8 +27,15 @@ class DropletAnimation(object):
 		self._max_dist = np.copy(self._spikes)
 		self._downsampled = np.array(range(self.num_spikes))
 		self._angles = [i*self._angle for i in xrange(self.num_spikes)]
-		self._np_angles = np.array(self._angles)
+		self._np_angles = np.array(self._angles).astype('double')
 		self._c_barriers = [[float(a), float(b), float(c), float(d)] for (a,b), (c, d) in barriers]
+
+		# The multi approach
+		self._barriers = np.array(self.barriers).astype('double')
+		self._center_points = np.array([
+										[start_point[0], start_point[1]],
+										[500, 200]
+										]).astype('double')
 
 	def get_average_radius(self):
 		return np.average(self._spikes)
@@ -97,14 +104,22 @@ class DropletAnimation(object):
 		self._downsampled = downsample(points, sample_rate)
 
 	def reset_max_dist(self):
+		spikes = find_shape_multiple(self._center_points, 
+			self._np_angles, self._barriers, self.max_len_spike)
+		print spikes
+
+	def reset_max_dist_old(self):
 		'''
 			Changed to use cython optimized code.
 		'''
 		cp_x, cp_y = self.center_point
 		barriers = self._c_barriers
 		ignore_start = len(barriers)
+
 		ignore_end = ignore_start
 		self._max_dist[:] = find_max_dist(barriers, cp_x, cp_y, self.max_len_spike, self._angles, ignore_start, ignore_end)
+
+		#self._max_dist[:] = find_max_dist(barriers, cp_x, cp_y, self.max_len_spike, self._angles, ignore_start, ignore_end)
 
 	def geometrical_center(self):
 		x, y = self.get_shape()
@@ -278,3 +293,4 @@ if __name__ == '__main__':
 			d.move_center_point(direction, downsample_rate)
 
 		fpsClock.tick(max_fps)
+		break
