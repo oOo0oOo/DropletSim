@@ -195,7 +195,6 @@ if __name__ == '__main__':
 
 		[[900, 200 + rand[9]], [1000, 200 + rand[10]]],
 		[[900, 200 - rand[19]], [1000, 200 - rand[20]]],
-
 	]
 
 	size = (1200, 400)
@@ -204,7 +203,7 @@ if __name__ == '__main__':
 	area = 8000.
 	num_spikes = 250
 	max_dist = 200
-	max_fps = 150
+	max_fps = 30
 
 	d = DropletAnimation(barriers, start_point, num_spikes = num_spikes, max_dist = max_dist,area = area)
 	d.move_center_point((0, 0))
