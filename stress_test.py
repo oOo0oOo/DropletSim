@@ -52,12 +52,12 @@ def run_across_screen():
 	before = time.time()
 	n = 0
 	while d.center_point[0] < size[0]:
-		d.move_relax((1,0), 0.1)
+		d.move_relax((1,0), 0.1, 0.5)
 		n += 1
 
 	return n / (time.time() - before), n
 
-for i in xrange(3):
+for i in xrange(1):
 	fps, num = run_across_screen()
 	print 'Calculated {} frames @ {} fps.'.format(num, fps)
 	d.center_point = (0, 200)

@@ -6,38 +6,12 @@ from pygame.locals import QUIT, KEYDOWN, K_LEFT, K_RIGHT, K_UP, K_DOWN
 
 # The C speedup
 from c_code import intersect_lines as intersect
-from c_code import distance, find_max_dist
+from c_code import distance, find_max_dist, downsample
 
 #from shapely.geometry import LineString, Point, MultiLineString
 
 pygame.init()
 font = pygame.font.SysFont('helvetica', 25)
-
-el_1 = 0.999
-el_2 = 2-el_1
-
-def intersect_lines(p1, p2, p3, p4):
-	p43_x = (p3[0] - p4[0])
-	p43_y = (p3[1] - p4[1])
-	p21_x = (p1[0] - p2[0])
-	p21_y = (p1[1] - p2[1])
-
-	u = (p21_x * p43_y - p21_y * p43_x)
-	
-	if u > 0:
-		a = (p3[0]*p4[1] - p3[1]*p4[0])
-		b = (p1[0]*p2[1] - p1[1]*p2[0])
-
-		x = (b * p43_x - p21_x * a) / u
-		y = (b * p43_y - p21_y * a) / u
-
-		# Check if on second line segment or outside
-		# Not very versatile...
-		# give it some elasticity
-		if min(p3[0], p4[0]) * el_1 <= x <= max(p3[0], p4[0]) * el_2 and min(p3[1], p4[1]) * el_1 <= y <= max(p3[1], p4[1]) * el_2:
-			return [x, y]
-
-	return False
 
 class DropletAnimation(object):
 	def __init__(self, barriers, start_point = (50, 30), num_spikes = 50, area = 7000, max_dist = 100):
@@ -51,9 +25,10 @@ class DropletAnimation(object):
 		self._angle = math.radians(360. / self.num_spikes)
 		self._mult_term = np.array([math.sin(self._angle) * 0.5])
 		self._max_dist = np.copy(self._spikes)
+		self._downsampled = np.array(range(self.num_spikes))
 		self._angles = [i*self._angle for i in xrange(self.num_spikes)]
 		self._np_angles = np.array(self._angles)
-		self._c_barriers = [[a, b, c, d] for (a,b), (c, d) in barriers]
+		self._c_barriers = [[float(a), float(b), float(c), float(d)] for (a,b), (c, d) in barriers]
 
 	def get_average_radius(self):
 		return np.average(self._spikes)
@@ -67,16 +42,17 @@ class DropletAnimation(object):
 	def move_up_spikes(self, distance):
 		self._spikes[self._spikes < self._max_dist] += distance
 
-	def move_center_point(self, t):
+	def move_center_point(self, t, sample_rate = 0.5):
 		cp = self.center_point
 		self.center_point = (cp[0] + t[0], cp[1] + t[1])
 		self.reset_max_dist()
 		self.find_shape()
+		self.downsample(sample_rate)
 
-	def move_relax(self, t, ratio):
+	def move_relax(self, t, ratio, sample_rate):
 		cp = self.center_point
 		s = self.stress_vector(ratio)
-		self.move_center_point((s[0] - cp[0] + t[0], s[1] - cp[1] + t[1]))
+		self.move_center_point((s[0] - cp[0] + t[0], s[1] - cp[1] + t[1]), sample_rate)
 
 	def relax(self, step_size = 0.5):
 		c = self.center_point
@@ -91,6 +67,12 @@ class DropletAnimation(object):
 	def get_max(self):
 		x = self._max_dist * np.cos(self._np_angles) + self.center_point[0]
 		y = self._max_dist * np.sin(self._np_angles) + self.center_point[1]
+		return x, y
+
+	def get_downsampled(self):
+		ds = self._downsampled
+		x = self._spikes[ds] * np.cos(self._np_angles[ds]) + self.center_point[0]
+		y = self._spikes[ds] * np.sin(self._np_angles[ds]) + self.center_point[1]
 		return x, y
 
 	def find_shape(self, point = False):
@@ -109,6 +91,10 @@ class DropletAnimation(object):
 		else:
 			print 'Area too large!!'
 			self._spikes = np.copy(self._max_dist)
+
+	def downsample(self, sample_rate):
+		points = np.dstack(self.get_shape())[0]
+		self._downsampled = downsample(points, sample_rate)
 
 	def reset_max_dist(self):
 		'''
@@ -203,10 +189,8 @@ if __name__ == '__main__':
 	area = 8000.
 	num_spikes = 250
 	max_dist = 200
-	max_fps = 30
-
-	d = DropletAnimation(barriers, start_point, num_spikes = num_spikes, max_dist = max_dist,area = area)
-	d.move_center_point((0, 0))
+	max_fps = 500
+	downsample_rate = 0.25 # Keep this percentage of edge points
 
 	fpsClock = pygame.time.Clock()
 	window = pygame.display.set_mode(size)
@@ -217,11 +201,14 @@ if __name__ == '__main__':
 	blue = pygame.Color(10, 10, 245)
 	red = pygame.Color(245, 10, 10)
 
-	# set up the color scheme (3D Fade)
+	# set up the color scheme (3D Fade) & downsampling
 	radius = math.sqrt(area/math.pi)
 	circumference = math.pi * 2 * radius
 	relaxed = circumference / num_spikes
-	rg = ColorGradient([0.5, relaxed * 2], (245, 50, 50), (50, 245, 50))
+	# rg = ColorGradient([0.5, relaxed * 2], (245, 50, 50), (50, 245, 50))
+
+	d = DropletAnimation(barriers, start_point, num_spikes = num_spikes, max_dist = max_dist,area = area)
+	d.move_center_point((0, 0), downsample_rate)
 
 	# The animation loop
 	while True:
@@ -236,16 +223,17 @@ if __name__ == '__main__':
 		pygame.draw.circle(window, blue, center, 3)
 
 		#Draw boundary
-		x,y = d.get_shape()
-		for i in xrange(num_spikes):
+		x,y = d.get_downsampled()
+		num = len(x)
+		for i in xrange(num):
 			point = (x[i], y[i])
-			next_i = (i + 1)%d.num_spikes
+			next_i = (i + 1)%num
 			next_point = (x[next_i], y[next_i])
 			# get color according to scheme
-			dist = distance(point[0], point[1], next_point[0], next_point[1])
-			c = rg.get_color(dist)
-			color = pygame.Color(c[0], c[1], c[2])
-			pygame.draw.line(window, color, point, next_point, 3)
+			# dist = distance(point[0], point[1], next_point[0], next_point[1])
+			#c = rg.get_color(dist)
+			# color = pygame.Color(c[0], c[1], c[2])
+			pygame.draw.aaline(window, blue, point, next_point, 1)
 
 
 		#Show statistics
@@ -282,8 +270,8 @@ if __name__ == '__main__':
 			not_here = True
 
 		if not_here:
-			d.move_relax(direction, 0.3)
+			d.move_relax(direction, 0.3, downsample_rate)
 		else:
-			d.move_center_point(direction)
+			d.move_center_point(direction, downsample_rate)
 
 		fpsClock.tick(max_fps)
