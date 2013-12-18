@@ -101,7 +101,6 @@ cpdef np.ndarray[double, ndim=1] find_max_dist(list barriers, double cp_x, doubl
 
 	return max_dist
 
-
 # Find max dist multiple (simultaniously)
 cpdef find_shape_multiple(np.ndarray[double, ndim=2] center_points, np.ndarray[double, ndim=1] angles, 
 		np.ndarray[double, ndim=3] barriers, double max_len):
@@ -116,60 +115,63 @@ cpdef find_shape_multiple(np.ndarray[double, ndim=2] center_points, np.ndarray[d
 	cdef double max_x, min_x, max_y, min_y
 	found = 0
 
-	while found < 10 and numpy.any(running):
-		# Extend all active spikes
-		spikes[running] += 0.1
-
-		active = spikes[running]
+	while found < 10:
 		for this in numpy.ndindex(spikes.shape):
-			cp_x = center_points[this[0]][0]
-			cp_y = center_points[this[0]][1]
-
-			max_x = cp_x + max_len
-			min_x = cp_x - max_len
-			max_y = cp_y + max_len
-			min_y = cp_y - max_len
-
-			o_x = spikes[this] * c_libc_cos(angles[this[1]]) + cp_x
-			o_y = spikes[this] * c_libc_sin(angles[this[1]]) + cp_y
-
-			# Check barriers
-			for j in range(barriers.shape[0]):
-				b = barriers[j]
-				# Check if one of the points lies within max_len_spike (square)
-				if ((min_x < b[0][0] < max_x) and (min_y < b[0][1] < max_y)) or ((min_x < b[1][0] < max_x) and (min_y < b[1][1] < max_y)):
-					#Check on which side of the line the point is & call cython optimized function
-					if ((b[1][0] - b[0][0])*(cp_y - b[0][1]) - (b[1][1] - b[0][1])*(cp_x - b[0][0])) > 0:
-						p_inter = intersect_lines(cp_x, cp_y, o_x, o_y, b[0][0], b[0][1], b[1][0], b[1][1])
-					else:
-						p_inter = intersect_lines(o_x, o_y, cp_x, cp_y, b[0][0], b[0][1], b[1][0], b[1][1])
-
-					if p_inter != (False, False):
-						running[this] = False	
-
-			# Check other spikes 
 			if running[this]:
-				for other in numpy.ndindex(spikes.shape):
-					if other[0] != this[0]:
-						p1_x = center_points[other[0]][0]
-						p1_y = center_points[other[0]][1]
-						p2_x = spikes[other] * c_libc_cos(angles[other[1]]) + p1_x
-						p2_y = spikes[other] * c_libc_sin(angles[other[1]]) + p1_y
+				spikes[this] += 0.1
+				cp_x = center_points[this[0]][0]
+				cp_y = center_points[this[0]][1]
 
-						if ((min_x < p1_x < max_x) and (min_y < p1_y < max_y)) or ((min_x < p2_x < max_x) and (min_y < p2_y < max_y)):
-							#Check on which side of the line the point is & call cython optimized function
-							if ((p2_x - p1_x)*(cp_y - p1_y) - (p2_y - p1_y)*(cp_x - p1_x)) > 0:
-								p_inter = intersect_lines(cp_x, cp_y, o_x, o_y, p1_x, p1_y, p2_x, p2_y)
-							else:
-								p_inter = intersect_lines(o_x, o_y, cp_x, cp_y, p1_x, p1_y, p2_x, p2_y)
+				max_x = cp_x + max_len
+				min_x = cp_x - max_len
+				max_y = cp_y + max_len
+				min_y = cp_y - max_len
 
-							if p_inter != (False, False):
-								running[this] = False
-								running[other] = False
+				o_x = spikes[this] * c_libc_cos(angles[this[1]]) + cp_x
+				o_y = spikes[this] * c_libc_sin(angles[this[1]]) + cp_y
+
+				# Check barriers
+				for j in range(barriers.shape[0]):
+					b = barriers[j]
+					# Check if one of the points lies within max_len_spike (square)
+					if ((min_x < b[0][0] < max_x) and (min_y < b[0][1] < max_y)) or ((min_x < b[1][0] < max_x) and (min_y < b[1][1] < max_y)):
+						#Check on which side of the line the point is & call cython optimized function
+						if ((b[1][0] - b[0][0])*(cp_y - b[0][1]) - (b[1][1] - b[0][1])*(cp_x - b[0][0])) > 0:
+							p_inter = intersect_lines(cp_x, cp_y, o_x, o_y, b[0][0], b[0][1], b[1][0], b[1][1])
+						else:
+							p_inter = intersect_lines(o_x, o_y, cp_x, cp_y, b[0][0], b[0][1], b[1][0], b[1][1])
+
+						if p_inter != (False, False):
+							running[this] = False	
+
+				# Check other spikes 
+				if running[this]:
+					for other in numpy.ndindex(spikes.shape):
+						if other[0] != this[0]:
+							p1_x = center_points[other[0]][0]
+							p1_y = center_points[other[0]][1]
+							p2_x = spikes[other] * c_libc_cos(angles[other[1]]) + p1_x
+							p2_y = spikes[other] * c_libc_sin(angles[other[1]]) + p1_y
+
+							if ((min_x < p1_x < max_x) and (min_y < p1_y < max_y)) or ((min_x < p2_x < max_x) and (min_y < p2_y < max_y)):
+								#Check on which side of the line the point is & call cython optimized function
+								if ((p2_x - p1_x)*(cp_y - p1_y) - (p2_y - p1_y)*(cp_x - p1_x)) > 0:
+									p_inter = intersect_lines(cp_x, cp_y, o_x, o_y, p1_x, p1_y, p2_x, p2_y)
+								else:
+									p_inter = intersect_lines(o_x, o_y, cp_x, cp_y, p1_x, p1_y, p2_x, p2_y)
+
+								if p_inter != (False, False):
+									running[this] = False
+									running[other] = False
 
 		found += 1
 
+	return spikes
 
+cpdef get_area(spikes, mult_term):
+	for i in range(len(spikes)):
+		i_next = ()
+	return np.sum(self._spikes * np.roll(self._spikes, 1) * self._mult_term)
 
 cpdef np.ndarray[long, ndim=1] downsample(np.ndarray[double, ndim=2] points, double rate):
 	# Returns a list with indices of all used points
