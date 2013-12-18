@@ -158,7 +158,6 @@ class DropletAnimation(object):
 	def find_shapes(self):
 		self._spikes[:] = 0.00001
 		self._stopped[:] = 0
-		#self._stopped = np.zeros_like(self._stopped)
 
 		areas = self.get_areas()
 		num = 0
@@ -184,13 +183,8 @@ class DropletAnimation(object):
 		'''
 		self._max_dist[:] = 0.0 
 		for num, (start, stop) in enumerate(self._indices):
-			cp_x, cp_y = self._centers[num]
-			barriers = self._c_barriers
-			ignore_start = len(barriers)
-			ignore_end = ignore_start
-			self._max_dist[start:stop] = find_max_dist(barriers, cp_x, cp_y, self.max_len_spike, self._angles, ignore_start, ignore_end)
-
-		#self._max_dist[:] = find_max_dist(barriers, cp_x, cp_y, self.max_len_spike, self._angles, ignore_start, ignore_end)
+			c = self._centers[num]
+			self._max_dist[start:stop] = find_max_dist(self._c_barriers, c[0], c[1], self.max_len_spike, self._angles)
 
 	def geometrical_centers(self):
 		c = []

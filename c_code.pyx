@@ -1,5 +1,9 @@
+#cython: boundscheck=False
+#cython: wraparound=False
+
 cimport numpy as np
 import numpy
+from cython.parallel cimport prange
 
 # Inline min and max functions
 cdef inline double double_max(double a, double b): return a if a >= b else b
@@ -48,25 +52,45 @@ cpdef tuple intersect_lines(double p1_x, double p1_y, double p2_x, double p2_y, 
 	return False, False
 
 
-cpdef double distance(double p1_x, double p1_y, double p2_x, double p2_y, ):
+cpdef double distance(double p1_x, double p1_y, double p2_x, double p2_y):
 	cdef double v_x, v_y
 	v_x = p2_x - p1_x
 	v_y = p2_y - p1_y
 	return c_libc_sqrt((v_x * v_x) + (v_y * v_y))
 
+cpdef double get_area(np.ndarray[double, ndim=1] spikes, double mult_term):
+	cdef double s = 0.0
+	cdef unsigned int j = spikes.size
+	cdef unsigned int i
 
-cpdef np.ndarray[double, ndim=1] find_max_dist(list barriers, double cp_x, double cp_y, double max_len_spike, list angles, int ignore_start, int  ignore_end):
+	for i in range(j):
+		s += spikes[i] * spikes[j] * mult_term
+		j = i
+
+	return s
+
+cpdef np.ndarray[double, ndim=1] move_up_spikes(np.ndarray[double, ndim=1] spikes, np.ndarray[double, ndim=1] max_dist, double step):
+	cdef int i
+	
+	for i in range(spikes.size):
+		if spikes[i] < max_dist[i]:
+			spikes[i] += step
+		
+	return spikes
+
+
+cpdef np.ndarray[double, ndim=1] find_max_dist(np.ndarray[double, ndim=2] barriers, double cp_x, double cp_y, double max_len_spike, np.ndarray[double, ndim=1] angles):
 	
 	#Type declarations
 	cdef double o_x, o_y, len_inter, dist, p1_x, p1_y, p2_x, p2_y
 	cdef int i, j, num_barrier
 	cdef tuple p_inter
-	cdef list b
+	#cdef np.ndarray[double, ndim=1] b
 	cdef np.ndarray[double, ndim=1] max_dist
 
 	num_barriers = len(barriers)
 
-	max_dist = numpy.empty((len(angles)))
+	max_dist = numpy.empty_like(angles)
 
 	cdef double max_x, min_x, max_y, min_y
 	max_x = cp_x + max_len_spike
@@ -74,23 +98,21 @@ cpdef np.ndarray[double, ndim=1] find_max_dist(list barriers, double cp_x, doubl
 	max_y = cp_y + max_len_spike
 	min_y = cp_y - max_len_spike
 
-	ind_list = range(ignore_start) + range(ignore_end, len(barriers))
-
-	for i in range(len(angles)):
+	for i in range(angles.size):
 		o_x = max_len_spike * c_libc_cos(angles[i]) + cp_x
 		o_y = max_len_spike * c_libc_sin(angles[i]) + cp_y
 
 		len_inter = max_len_spike
 
-		for j in ind_list:
-			b = barriers[j]
+		for j in range(num_barriers):
+			# b = barriers[j,]
 			# Check if one of the points lies within max_len_spike (square)
-			if ((min_x < b[0] < max_x) and (min_y < b[1] < max_y)) or ((min_x < b[2] < max_x) and (min_y < b[3] < max_y)):
+			if ((min_x < barriers[j,0] < max_x) and (min_y < barriers[j,1] < max_y)) or ((min_x < barriers[j,2] < max_x) and (min_y < barriers[j,3] < max_y)):
 				#Check on which side of the line the point is & call cython optimized function
-				if ((b[2] - b[0])*(cp_y - b[1]) - (b[3] - b[1])*(cp_x - b[0])) > 0:
-					p_inter = intersect_lines(cp_x, cp_y, o_x, o_y, b[0], b[1], b[2], b[3])
+				if ((barriers[j,2] - barriers[j,0])*(cp_y - barriers[j,1]) - (barriers[j,3] - barriers[j,1])*(cp_x - barriers[j,0])) > 0:
+					p_inter = intersect_lines(cp_x, cp_y, o_x, o_y, barriers[j,0], barriers[j,1], barriers[j,2], barriers[j,3])
 				else:
-					p_inter = intersect_lines(o_x, o_y, cp_x, cp_y, b[0], b[1], b[2], b[3])
+					p_inter = intersect_lines(o_x, o_y, cp_x, cp_y, barriers[j,0], barriers[j,1], barriers[j,2], barriers[j,3])
 
 				if p_inter != (False, False):
 					dist = distance(p_inter[0], p_inter[1], cp_x, cp_y)
@@ -167,11 +189,6 @@ cpdef find_shape_multiple(np.ndarray[double, ndim=2] center_points, np.ndarray[d
 		found += 1
 
 	return spikes
-
-cpdef get_area(spikes, mult_term):
-	for i in range(len(spikes)):
-		i_next = ()
-	return np.sum(self._spikes * np.roll(self._spikes, 1) * self._mult_term)
 
 cpdef np.ndarray[long, ndim=1] downsample(np.ndarray[double, ndim=2] points, double rate):
 	# Returns a list with indices of all used points

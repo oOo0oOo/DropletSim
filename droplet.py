@@ -6,7 +6,7 @@ from pygame.locals import QUIT, KEYDOWN, K_LEFT, K_RIGHT, K_UP, K_DOWN
 
 # The C speedup
 from c_code import intersect_lines as intersect
-from c_code import distance, find_max_dist, downsample
+from c_code import distance, find_max_dist, downsample, get_area, move_up_spikes
 
 #from shapely.geometry import LineString, Point, MultiLineString
 
@@ -23,24 +23,27 @@ class DropletAnimation(object):
 
 		self._spikes = np.array([0.1 for i in xrange(self.num_spikes)])
 		self._angle = math.radians(360. / self.num_spikes)
-		self._mult_term = np.array([math.sin(self._angle) * 0.5])
+		self._mult_term = math.sin(self._angle) * 0.5
 		self._max_dist = np.copy(self._spikes)
 		self._downsampled = np.array(range(self.num_spikes))
 		self._angles = [i*self._angle for i in xrange(self.num_spikes)]
 		self._np_angles = np.array(self._angles)
-		self._c_barriers = [[float(a), float(b), float(c), float(d)] for (a,b), (c, d) in barriers]
+		self._c_barriers = np.array([[float(a), float(b), float(c), float(d)] for (a,b), (c, d) in barriers])
 
 	def get_average_radius(self):
 		return np.average(self._spikes)
 
 	def get_area(self):
-		return np.sum(self._spikes * np.roll(self._spikes, 1) * self._mult_term)
+		# Cython optimized
+		return get_area(self._spikes, self._mult_term)
+		# return np.sum(self._spikes * np.roll(self._spikes, 1) * self._mult_term)
 
 	def get_max_area(self):
 		return np.sum(self._max_dist * np.roll(self._max_dist, 1) * self._mult_term)
 
 	def move_up_spikes(self, distance):
-		self._spikes[self._spikes < self._max_dist] += distance
+		# Cython optimized
+		self._spikes = move_up_spikes(self._spikes, self._max_dist, distance)
 
 	def move_center_point(self, t, sample_rate = 0.5):
 		cp = self.center_point
@@ -100,11 +103,8 @@ class DropletAnimation(object):
 		'''
 			Changed to use cython optimized code.
 		'''
-		cp_x, cp_y = self.center_point
-		barriers = self._c_barriers
-		ignore_start = len(barriers)
-		ignore_end = ignore_start
-		self._max_dist[:] = find_max_dist(barriers, cp_x, cp_y, self.max_len_spike, self._angles, ignore_start, ignore_end)
+		c = self.center_point
+		self._max_dist[:] = find_max_dist(self._c_barriers, c[0], c[1], self.max_len_spike, self._np_angles)
 
 	def geometrical_center(self):
 		x, y = self.get_shape()
@@ -192,8 +192,8 @@ if __name__ == '__main__':
 	area = 8000.
 	num_spikes = 250
 	max_dist = 200
-	max_fps = 500
-	downsample_rate = 0.25 # Keep this percentage of edge points
+	max_fps = 1500
+	downsample_rate = 0.75 # Keep this percentage of edge points
 
 	fpsClock = pygame.time.Clock()
 	window = pygame.display.set_mode(size)
