@@ -2,6 +2,7 @@
 
 import math, random
 import numpy as np
+from string import Template
 
 import pygame
 from pygame.locals import QUIT, KEYDOWN, K_LEFT, K_RIGHT, K_UP, K_DOWN
@@ -13,43 +14,89 @@ from pycuda.compiler import SourceModule
 
 
 c_source = r'''
-__global__ void check_stop(int *stopped, float *x_coords, float *y_coords, int per_droplet, int total_number)
-{
+
+/* Some global variables */
+__device__ float x_coords[$num_spikes], y_coords[$num_spikes];
+__device__ float center_x[$num_droplets], center_y[$num_droplets];
+__device__ int per_droplet, total_number, num_droplets;
+__device__ float angle;
+
+__global__ void init_memory(int per, int total, float ang){
+	per_droplet = per;
+	total_number = total;
+	num_droplets = total/per;
+	angle = ang;
+}
+
+__global__ void setup_points(float *cen_x, float *cen_y, float *spikes){
+	/* Load center points */
+	const int j = blockDim.x*blockIdx.x + threadIdx.x;
+	center_x[j] = cen_x[j];
+	center_y[j] = cen_y[j];
+}
+
+__global__ void check_stop(int *stopped, float *cen_x, float *cen_y, float *spikes)
+{	
+	
+	/* Load center points */
+
 	const int i = blockDim.x*blockIdx.x + threadIdx.x;
 	const float threshold = 3.5;
+	const int max_dist = 200;
 
-	/* Loop through all running points */
+	const int num = (i - (i % per_droplet)) / per_droplet;
+
+	const float c_x = cen_x[num];
+	const float c_y = cen_y[num];
+	center_x[num] = c_x;
+	center_y[num] = c_y;
+
+	x_coords[i] = spikes[i] * cos(angle * i) + c_x;
+	y_coords[i] = spikes[i] * sin(angle * i) + c_y;
+
+	__syncthreads();
+
 	if (stopped[i] == 0){
-
-		/* Find start_ignore and end_ignore  (own droplets spikes) */
-		const int num = (i - (i % per_droplet)) / per_droplet;
-		const int start_ignore = num * per_droplet;
-		const int end_ignore = (num + 1) * per_droplet;
-
 		float distance, min_dist, v_x, v_y, x_i, y_i;
+		int start, stop;
+
 		x_i = x_coords[i];
 		y_i = y_coords[i];
 		min_dist = 1000000.0;
 
-		for(int n = 0; n < start_ignore; n++) {
-			v_x = x_coords[n] - x_i;
-			v_y = y_coords[n] - y_i;
+		for(int m = 0; m < num; m++) {
+			if (abs(center_x[m] - c_x) < max_dist && abs(center_y[m] - c_y) < max_dist){
+				start = m * per_droplet;
+				stop = (m + 1) * per_droplet;
+				for(int n = start; n < stop; n++) {
+					v_x = x_coords[n] - x_i;
+					v_y = y_coords[n] - y_i;
 
-			distance = sqrt(v_x * v_x + v_y * v_y);
-			if (distance < min_dist){
-				min_dist = distance;
+					distance = sqrt(v_x * v_x + v_y * v_y);
+					if (distance < min_dist){
+						min_dist = distance;
+					};
+				};
 			};
 		
 		};
 
-		for(int n = end_ignore; n < total_number; n++) {
-			v_x = x_coords[n] - x_i;
-			v_y = y_coords[n] - y_i;
-			distance = sqrt(v_x * v_x + v_y * v_y);
-			if (distance < min_dist){
-				min_dist = distance;
-			};
+		for(int m = num + 1; m < total_number / per_droplet; m++) {
+			if (abs(center_x[m] - c_x) < max_dist && abs(center_y[m] - c_y) < max_dist){
+				start = m * per_droplet;
+				stop = (m + 1) * per_droplet;
 
+				for(int n = start; n < stop; n++) {
+					v_x = x_coords[n] - x_i;
+					v_y = y_coords[n] - y_i;
+
+					distance = sqrt(v_x * v_x + v_y * v_y);
+					if (distance < min_dist){
+						min_dist = distance;
+					};
+				};
+			};
+		
 		};
 
 		if (min_dist < threshold) {
@@ -65,7 +112,7 @@ __global__ void check_stop(int *stopped, float *x_coords, float *y_coords, int p
 
 # The Cython speedup
 from c_code import intersect_lines as intersect
-from c_code import distance, find_max_dist, downsample, find_shape_multiple
+from c_code import distance, find_max_dist, get_areas
 
 class DropletAnimation(object):
 	def __init__(self, barriers, centers = [[100, 100], [300, 600], [700, 100]], num_spikes = 50, area = 7000, max_dist = 100):
@@ -77,9 +124,9 @@ class DropletAnimation(object):
 		self._angle = math.radians(360. / self.num_spikes)
 		self._mult_term = np.array([math.sin(self._angle) * 0.5])
 		self._angles = [i*self._angle for i in xrange(self.num_spikes)]
-		self._np_angles = np.array(self._angles).astype(np.float32)
+		self._np_angles = np.array(self._angles)
 		
-		self._c_barriers = [[float(a), float(b), float(c), float(d)] for (a,b), (c, d) in barriers]
+		self._c_barriers = np.array([[float(a), float(b), float(c), float(d)] for (a,b), (c, d) in barriers])
 
 		# The multi approach
 		self._barriers = np.array(self.barriers).astype(np.float32)
@@ -100,7 +147,7 @@ class DropletAnimation(object):
 		self._centers_x = np.repeat([i[0] for i in centers], self.num_spikes)
 		self._centers_y = np.repeat([i[1] for i in centers], self.num_spikes)
 
-		self.next_relax = np.array([[0.0, 0.0] for i in range(self._num_droplets)])
+		self._points = np.empty((self._total_spikes, 2), dtype = np.float32)
 
 		# Setup the indices
 		self._indices = []
@@ -110,15 +157,37 @@ class DropletAnimation(object):
 			self._indices.append((start, stop))
 
 		# Setup pycuda stuff
-		self.mod = SourceModule(c_source)
+		self._spikes_grid = (self.per_droplet,1)
+		self._spikes_block = (self.num_droplets,1,1)
+
+		self._centers_grid = (self.num_droplets,1)
+		self._centers_block = (1,1,1)
+
+		# A little bit of dynamics... (allocate right amount of memory)
+		s = Template(c_source).substitute(num_spikes = self._total_spikes,
+			num_droplets = self.num_droplets)
+		self.mod = SourceModule(s)
 		self._check_stop_raw = self.mod.get_function("check_stop")
+		self._init_memory_raw = self.mod.get_function("init_memory")
+		#self._setup_memory_raw = self.mod.get_function("setup_memory")
+
+		# Setup the constants
+		self._init_memory_raw(self._per_droplet, self._total_spikes, np.float32(self._angle),
+				grid = (1,1), block = (1,1,1)
+				)
+
+		#check_stop_types = [np.ndarray, np.ndarray, np.ndarray, np.int32, np.int32]
+		#self._check_stop_raw.prepare(check_stop_types)
+
 
 	def get_areas(self):
-		areas = []
-		for start, stop in self._indices:
-			#extra = (stop+1)%self._total_spikes
-			areas.append(np.sum(self._spikes[start:stop - 1] * self._spikes[start+1:stop] * self._mult_term))
-		return areas
+		#areas = []
+		#for start, stop in self._indices:
+		#	extra = (stop+1)%self._total_spikes
+		#	areas.append(np.sum(self._spikes[start:stop - 1] * self._spikes[start+1:stop] * self._mult_term))
+		#return areas
+
+		return get_areas(self._spikes, self._mult_term, self._per_droplet)
 
 	def move_up_spikes(self, areas):
 		cond1 = self._spikes < self._max_dist
@@ -150,7 +219,8 @@ class DropletAnimation(object):
 			shapes.append((x, y))
 		return shapes
 
-	def get_points(self):
+	def update_points(self):
+		#self._points = get_points(self._points, self._centers, self._spikes, self._per_droplet, self._angle)
 		x = self._spikes * np.cos(self._np_angles_complete) + self._centers_x
 		y = self._spikes * np.sin(self._np_angles_complete) + self._centers_y
 		return x.astype(np.float32), y.astype(np.float32)
@@ -165,15 +235,28 @@ class DropletAnimation(object):
 
 		min_val = 0.01*n
 
+		# Setup memory
+
+		c_x = drv.In(self._centers[:, 0].astype(np.float32))
+		c_y = drv.In(self._centers[:, 1].astype(np.float32))
+
+		#self._setup_memory_raw(
+		#		drv.In(self._centers[:, 0].astype(np.float32)), 
+		#		drv.In(self._centers[:, 1].astype(np.float32)),
+		#		grid = self._centers_grid, block = self._centers_block,
+		#		)
+
 		while n > min_val and num < 150:
 			n = self.move_up_spikes(areas)
 			areas = self.get_areas()
 
-			# check for collision with other droplet
-			x, y = self.get_points()
-			self._check_stop_raw(drv.InOut(self._stopped), drv.In(x), drv.In(y), 
-				self._per_droplet, self._total_spikes, 
-				grid=(self.per_droplet,1), block=(self.num_droplets,1,1))
+			# check for collision with other droplet (pycuda)
+			#x, y = self.update_points()
+			#print self._spikes
+			self._check_stop_raw(
+				drv.InOut(self._stopped), c_x, c_y, drv.In(self._spikes.astype(np.float32)),
+				grid = self._spikes_grid, block = self._spikes_block,
+				)
 
 			num += 1
 
@@ -184,7 +267,7 @@ class DropletAnimation(object):
 		self._max_dist[:] = 0.0 
 		for num, (start, stop) in enumerate(self._indices):
 			c = self._centers[num]
-			self._max_dist[start:stop] = find_max_dist(self._c_barriers, c[0], c[1], self.max_len_spike, self._angles)
+			self._max_dist[start:stop] = find_max_dist(self._c_barriers, c[0], c[1], self.max_len_spike, self._np_angles)
 
 	def geometrical_centers(self):
 		c = []
@@ -251,7 +334,7 @@ def intify(tup):
 	return [int(tup[0]), int(tup[1])]
 
 def start_simulation(size, barriers, centers, area, direction = (3, 0), relax = 1.0,
-	num_spikes = 100, max_dist = 200, max_fps = 500):
+	num_spikes = 100, max_dist = 200, max_fps = 500, num_frames = -1):
 	
 	pygame.init()
 	font = pygame.font.SysFont('helvetica', 25)
@@ -269,7 +352,8 @@ def start_simulation(size, barriers, centers, area, direction = (3, 0), relax = 
 		max_dist = max_dist, area = area)
 
 	# The animation loop
-	while True:
+	frames = 0
+	while num_frames == -1 or frames < num_frames:
 		# Update agents
 		d.move_relax(direction, relax)
 
@@ -280,8 +364,8 @@ def start_simulation(size, barriers, centers, area, direction = (3, 0), relax = 
 			pygame.draw.aaline(window, black, p1, p2, 1)
 
 		# Draw center points, centroid & stress vector
-		#for x, y in d._centers:
-			#pygame.draw.circle(window, blue, (int(x), int(y)), 3)
+		for x, y in d._centers:
+			pygame.draw.circle(window, blue, (int(x), int(y)), 3)
 
 		#Draw boundary
 		shapes = d.get_shapes()
@@ -317,6 +401,9 @@ def start_simulation(size, barriers, centers, area, direction = (3, 0), relax = 
 
 		pygame.display.update()
 
+		if num_frames != -1:
+			frames += 1
+
 		fpsClock.tick(max_fps)
 
 
@@ -345,12 +432,11 @@ if __name__ == '__main__':
 	direction = (3, 0)
 	relax = 1.5
 	area = 7000.
-	num_spikes = 80
+	num_spikes = 50
 	max_dist = 200
 	max_fps = 500
-	num_droplets = 15
+	num_droplets = 20
 
 	centers = [[-random.randrange(0, 20*num_droplets), random.randrange(80, size[1]-80)] for i in range(num_droplets)]
 
 	start_simulation(size, barriers, centers, area)
-	
