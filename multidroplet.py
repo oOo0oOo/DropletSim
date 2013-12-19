@@ -16,31 +16,33 @@ from pycuda.compiler import SourceModule
 c_source = r'''
 
 /* Some global variables */
-__device__ float x_coords[$num_spikes], y_coords[$num_spikes], areas[$num_spikes];
-__device__ float areas_tot[$num_droplets], steps[$num_droplets];
-
-__device__ int stopped[$num_spikes];
+__device__ float x_coords[$num_spikes], y_coords[$num_spikes];
 __device__ float center_x[$num_droplets], center_y[$num_droplets];
 __device__ int per_droplet, total_number, num_droplets;
-__device__ float angle, step_factor, min_step, mult_term, max_area;
+__device__ float angle, step_factor, min_step;
 
-__global__ void init_memory(int per, int total, float ang, float step, float m_step, float max_a){
+__global__ void init_memory(int per, int total, float ang, float step, float m_step){
 	per_droplet = per;
 	total_number = total;
 	step_factor = step;
 	min_step = m_step;
 	angle = ang;
-	max_area = max_a;
 
 	num_droplets = total/per;
-	mult_term = sin(angle) * 0.5;
 }
 
-__global__ void find_shapes(float *spikes, float *cen_x, float *cen_y, float *max_len)
+__global__ void check_stop(int *stopped, float *spikes, float *cen_x, float *cen_y, float *max_len)
 {	
+	
 	const int i = blockDim.x*blockIdx.x + threadIdx.x;
 	const float threshold = 3.5;
 	const int max_dist = 200;
+
+	/* Advance all spikes: step_factor * (self.area - a) / self.area)*/
+	
+	if ((spikes[i] < max_len[i]) && stopped[i] == 0) {
+		spikes[i] += 0.5;
+	};
 
 	const int num = (i - (i % per_droplet)) / per_droplet;
 	const float c_x = cen_x[num];
@@ -48,105 +50,62 @@ __global__ void find_shapes(float *spikes, float *cen_x, float *cen_y, float *ma
 	center_x[num] = c_x;
 	center_y[num] = c_y;
 
+	x_coords[i] = spikes[i] * cos(angle * i) + c_x;
+	y_coords[i] = spikes[i] * sin(angle * i) + c_y;
+	
+	__syncthreads();
 
-	float distance, min_dist, v_x, v_y, x_i, y_i;
-	int start, stop;
+	if (stopped[i] == 0){
+		float distance, min_dist, v_x, v_y, x_i, y_i;
+		int start, stop;
 
-	stopped[i] = 0;
-	spikes[i] = 0.0001;
+		x_i = x_coords[i];
+		y_i = y_coords[i];
+		min_dist = 1000000.0;
 
-	int runs = 0;
-	while (runs < 120){
-		runs += 1;
+		for(int m = 0; m < num; m++) {
+			if (abs(center_x[m] - c_x) < max_dist && abs(center_y[m] - c_y) < max_dist){
+				start = m * per_droplet;
+				stop = (m + 1) * per_droplet;
+				for(int n = start; n < stop; n++) {
+					v_x = x_coords[n] - x_i;
+					v_y = y_coords[n] - y_i;
 
-		/* Calculate droplet area */
-		int next = (i+1)%total_number;
-		areas[i] = spikes[i] * spikes[next] * mult_term;
-
-		x_coords[i] = spikes[i] * cos(angle * i) + c_x;
-		y_coords[i] = spikes[i] * sin(angle * i) + c_y;
-
-		__syncthreads();
-
-		if (i < num_droplets){
-			float val;
-
-			areas_tot[i] = 0.0;
-			/*
-			steps[i] = 0.0;
-			*/
-
-			for(int n = i * per_droplet; n < (i + 1) * per_droplet; n++) {
-				areas_tot[i] += areas[n];
-			}
-			val = 0.0;
-			if (areas_tot[i] < max_area*0.95){
-				val = step_factor * (max_area - areas_tot[i]) / max_area;
-				if (val < 0.5 && val > 0.0){
-					val = 0.5;
-				}
-			}
-
-			steps[i] = val;
+					distance = sqrt(v_x * v_x + v_y * v_y);
+					if (distance < min_dist){
+						min_dist = distance;
+					};
+				};
+			};
+		
 		};
 
-		__syncthreads();
+		for(int m = num + 1; m < total_number / per_droplet; m++) {
+			if (abs(center_x[m] - c_x) < max_dist && abs(center_y[m] - c_y) < max_dist){
+				start = m * per_droplet;
+				stop = (m + 1) * per_droplet;
 
-		if (stopped[i] == 0 && areas_tot[num] < max_area){
-			/* Advance all spikes: step_factor * (self.area - a) / self.area)*/
-			if (spikes[i] < max_len[i]) {
-				spikes[i] += steps[num];
-			};
+				for(int n = start; n < stop; n++) {
+					v_x = x_coords[n] - x_i;
+					v_y = y_coords[n] - y_i;
 
-			x_i = x_coords[i];
-			y_i = y_coords[i];
-			min_dist = 1000000.0;
-
-			for(int m = 0; m < num; m++) {
-				if (abs(center_x[m] - c_x) < max_dist && abs(center_y[m] - c_y) < max_dist){
-					start = m * per_droplet;
-					stop = (m + 1) * per_droplet;
-					for(int n = start; n < stop; n++) {
-						v_x = x_coords[n] - x_i;
-						v_y = y_coords[n] - y_i;
-
-						distance = sqrt(v_x * v_x + v_y * v_y);
-						if (distance < min_dist){
-							min_dist = distance;
-						};
+					distance = sqrt(v_x * v_x + v_y * v_y);
+					if (distance < min_dist){
+						min_dist = distance;
 					};
 				};
-			
 			};
+		
+		};
 
-			for(int m = num + 1; m < total_number / per_droplet; m++) {
-				if (abs(center_x[m] - c_x) < max_dist && abs(center_y[m] - c_y) < max_dist){
-					start = m * per_droplet;
-					stop = (m + 1) * per_droplet;
-
-					for(int n = start; n < stop; n++) {
-						v_x = x_coords[n] - x_i;
-						v_y = y_coords[n] - y_i;
-
-						distance = sqrt(v_x * v_x + v_y * v_y);
-						if (distance < min_dist){
-							min_dist = distance;
-						};
-					};
-				};
-			
-			};
-
-			if (min_dist < threshold) {
-				stopped[i] = 1;
-			}
-			else {
-				stopped[i] = 0;
-			}
-
+		if (min_dist < threshold) {
+			stopped[i] = 1;
 		}
+		else {
+			stopped[i] = 0;
+		}
+
 	}
-	
 }
 '''
 
@@ -208,16 +167,15 @@ class DropletAnimation(object):
 			num_droplets = self.num_droplets)
 
 		self.mod = SourceModule(s)
-		self._find_shapes_raw = self.mod.get_function("find_shapes")
+		self._check_stop_raw = self.mod.get_function("check_stop")
 		self._init_memory_raw = self.mod.get_function("init_memory")
 
 		# Setup the constants
-		step_factor = np.float32(1.5)
+		step_factor = np.float32(2.5)
 		min_step = np.float32(0.5)
-		max_area = np.float32(self.area)
 
 		self._init_memory_raw(self._per_droplet, self._total_spikes, np.float32(self._angle), 
-				step_factor, min_step, max_area,
+				step_factor, min_step,
 				grid = (1,1), block = (1,1,1)
 				)
 
@@ -266,20 +224,30 @@ class DropletAnimation(object):
 
 	def find_shapes(self):
 		self._spikes[:] = 0.00001
+		self._stopped[:] = 0
+
+		areas = self.get_areas()
+		num = 0
+		n = self._total_spikes
+
+		min_val = 0.01*n
 
 		# Setup center points for pycuda
 		c_x = drv.In(self._centers[:, 0].astype(np.float32))
 		c_y = drv.In(self._centers[:, 1].astype(np.float32))
 		m_d = drv.In(self._max_dist)
 
-		# check for collision with other droplet (pycuda)
-		spikes = drv.Out(self._spikes)
-		self._find_shapes_raw(
-			spikes, c_x, c_y, m_d,
-			grid = self._spikes_grid, 
-			block = self._spikes_block
-			)
+		while num < 100:
+			# n = self.move_up_spikes(areas)
+			areas = self.get_areas()
+			# check for collision with other droplet (pycuda)
+			self._check_stop_raw(
+				drv.InOut(self._stopped), drv.InOut(self._spikes), 
+					c_x, c_y, m_d,
+					grid = self._spikes_grid, block = self._spikes_block,
+				)
 
+			num += 1
 
 	def reset_max_dist(self):
 		'''
