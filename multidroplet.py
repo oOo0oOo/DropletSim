@@ -19,33 +19,32 @@ c_source = r'''
 __device__ float x_coords[$num_spikes], y_coords[$num_spikes];
 __device__ float center_x[$num_droplets], center_y[$num_droplets];
 __device__ int per_droplet, total_number, num_droplets;
-__device__ float angle;
+__device__ float angle, step_factor, min_step;
 
-__global__ void init_memory(int per, int total, float ang){
+__global__ void init_memory(int per, int total, float ang, float step, float m_step){
 	per_droplet = per;
 	total_number = total;
-	num_droplets = total/per;
+	step_factor = step;
+	min_step = m_step;
 	angle = ang;
+
+	num_droplets = total/per;
 }
 
-__global__ void setup_points(float *cen_x, float *cen_y, float *spikes){
-	/* Load center points */
-	const int j = blockDim.x*blockIdx.x + threadIdx.x;
-	center_x[j] = cen_x[j];
-	center_y[j] = cen_y[j];
-}
-
-__global__ void check_stop(int *stopped, float *cen_x, float *cen_y, float *spikes)
+__global__ void check_stop(int *stopped, float *spikes, float *cen_x, float *cen_y, float *max_len)
 {	
 	
-	/* Load center points */
-
 	const int i = blockDim.x*blockIdx.x + threadIdx.x;
 	const float threshold = 3.5;
 	const int max_dist = 200;
 
-	const int num = (i - (i % per_droplet)) / per_droplet;
+	/* Advance all spikes: step_factor * (self.area - a) / self.area)*/
+	
+	if ((spikes[i] < max_len[i]) && stopped[i] == 0) {
+		spikes[i] += 0.5;
+	};
 
+	const int num = (i - (i % per_droplet)) / per_droplet;
 	const float c_x = cen_x[num];
 	const float c_y = cen_y[num];
 	center_x[num] = c_x;
@@ -53,7 +52,7 @@ __global__ void check_stop(int *stopped, float *cen_x, float *cen_y, float *spik
 
 	x_coords[i] = spikes[i] * cos(angle * i) + c_x;
 	y_coords[i] = spikes[i] * sin(angle * i) + c_y;
-
+	
 	__syncthreads();
 
 	if (stopped[i] == 0){
@@ -166,13 +165,17 @@ class DropletAnimation(object):
 		# A little bit of dynamics... (allocate right amount of memory)
 		s = Template(c_source).substitute(num_spikes = self._total_spikes,
 			num_droplets = self.num_droplets)
+
 		self.mod = SourceModule(s)
 		self._check_stop_raw = self.mod.get_function("check_stop")
 		self._init_memory_raw = self.mod.get_function("init_memory")
-		#self._setup_memory_raw = self.mod.get_function("setup_memory")
 
 		# Setup the constants
-		self._init_memory_raw(self._per_droplet, self._total_spikes, np.float32(self._angle),
+		step_factor = np.float32(2.5)
+		min_step = np.float32(0.5)
+
+		self._init_memory_raw(self._per_droplet, self._total_spikes, np.float32(self._angle), 
+				step_factor, min_step,
 				grid = (1,1), block = (1,1,1)
 				)
 
@@ -181,12 +184,6 @@ class DropletAnimation(object):
 
 
 	def get_areas(self):
-		#areas = []
-		#for start, stop in self._indices:
-		#	extra = (stop+1)%self._total_spikes
-		#	areas.append(np.sum(self._spikes[start:stop - 1] * self._spikes[start+1:stop] * self._mult_term))
-		#return areas
-
 		return get_areas(self._spikes, self._mult_term, self._per_droplet)
 
 	def move_up_spikes(self, areas):
@@ -235,27 +232,19 @@ class DropletAnimation(object):
 
 		min_val = 0.01*n
 
-		# Setup memory
-
+		# Setup center points for pycuda
 		c_x = drv.In(self._centers[:, 0].astype(np.float32))
 		c_y = drv.In(self._centers[:, 1].astype(np.float32))
+		m_d = drv.In(self._max_dist)
 
-		#self._setup_memory_raw(
-		#		drv.In(self._centers[:, 0].astype(np.float32)), 
-		#		drv.In(self._centers[:, 1].astype(np.float32)),
-		#		grid = self._centers_grid, block = self._centers_block,
-		#		)
-
-		while n > min_val and num < 150:
-			n = self.move_up_spikes(areas)
+		while num < 100:
+			# n = self.move_up_spikes(areas)
 			areas = self.get_areas()
-
 			# check for collision with other droplet (pycuda)
-			#x, y = self.update_points()
-			#print self._spikes
 			self._check_stop_raw(
-				drv.InOut(self._stopped), c_x, c_y, drv.In(self._spikes.astype(np.float32)),
-				grid = self._spikes_grid, block = self._spikes_block,
+				drv.InOut(self._stopped), drv.InOut(self._spikes), 
+					c_x, c_y, m_d,
+					grid = self._spikes_grid, block = self._spikes_block,
 				)
 
 			num += 1
