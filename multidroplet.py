@@ -274,7 +274,12 @@ def intify(tup):
 	return [int(tup[0]), int(tup[1])]
 
 def start_simulation(size, barriers, centers, area, direction = (3, 0), relax = 1.0,
-	num_spikes = 100, max_dist = 200, max_fps = 500, num_frames = -1):
+	num_spikes = 100, max_dist = 200, max_fps = 500, num_frames = -1, capture_folder = ''):
+
+	if capture_folder != '':
+		import os
+		if not os.path.exists(capture_folder):
+			os.makedirs(capture_folder)
 	
 	pygame.init()
 	font = pygame.font.SysFont('helvetica', 25)
@@ -292,8 +297,8 @@ def start_simulation(size, barriers, centers, area, direction = (3, 0), relax = 
 		max_dist = max_dist, area = area)
 
 	# The animation loop
-	frames = 0
-	while num_frames == -1 or frames < num_frames:
+	frame = 0
+	while num_frames == -1 or frame < num_frames:
 		# Update agents
 		d.move_relax(direction, relax)
 
@@ -341,8 +346,10 @@ def start_simulation(size, barriers, centers, area, direction = (3, 0), relax = 
 
 		pygame.display.update()
 
-		if num_frames != -1:
-			frames += 1
+		frame += 1
+
+		if capture_folder != '':
+			pygame.image.save(window, '{}/{}.jpg'.format(capture_folder, frame))
 
 		fpsClock.tick(max_fps)
 
