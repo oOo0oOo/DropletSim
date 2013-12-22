@@ -79,7 +79,6 @@ __global__ void check_stop(int *stopped, float *spikes, float *cen_x, float *cen
 '''
 
 # The Cython speedup
-from c_code import intersect_lines as intersect
 from c_code import distance, find_max_dist, get_areas
 
 class DropletAnimation(object):
@@ -199,7 +198,7 @@ class DropletAnimation(object):
 				drv.InOut(self._stopped), drv.In(self._spikes.astype(np.float32)), 
 				c_x, c_y, grid = self._spikes_grid, block = self._spikes_block,
 				)
-			
+
 			num += 1
 
 	def reset_max_dist(self):
@@ -331,11 +330,14 @@ def start_simulation(size, barriers, centers, area, direction = (3, 0), relax = 
 		#Show statistics
 		#s = d.stress_vector(1)
 		#vect = round(math.sqrt((s[0] - c[0]) ** 2 + (s[1] - c[1]) ** 2), 1)
+
+		'''
 		text = str(int(fpsClock.get_fps())) + ' fps'
 		label = font.render(text, 1, black)
 		rect = label.get_rect()
 		rect.center = (size[0]/2, 20)
 		window.blit(label, rect)
+		'''
 
 		#Handle events (single press, not hold)
 		for event in pygame.event.get():

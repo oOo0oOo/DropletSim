@@ -21,10 +21,10 @@ area = 8200.
 num_spikes = 80
 max_dist = size[0]/2
 max_fps = 500
-num_droplets = 340
-num_frames = 1000
-folder = 'relaxing'
-#folder = ''
+num_droplets = 375
+num_frames = 200
+#folder = 'relaxing'
+folder = ''
 
 centers = [[random.randrange(100*size[0] * 0.1, 100*size[0] * 0.9)/100, random.randrange(100*size[1] * 0.1, 100*size[1] * 0.9)/100] for i in range(num_droplets)]
 
