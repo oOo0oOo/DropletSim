@@ -17,64 +17,101 @@ c_source = r'''
 
 /* Some global variables */
 __device__ float x_coords[$num_spikes], y_coords[$num_spikes];
+__device__ float areas[$num_spikes];
 __device__ float center_x[$num_droplets], center_y[$num_droplets];
 __device__ int per_droplet, total_number, num_droplets;
-__device__ float angle, threshold, max_dist;
+__device__ int stopped[$num_spikes];
+__device__ float angle, threshold, max_dist, mult_term, max_area;
 
-__global__ void init_memory(int per, int total, float ang, float thresh, float max_d){
+__global__ void init_memory(int per, int total, float ang, float thresh, float max_d, float mult_t, float max_a){
 	per_droplet = per;
 	total_number = total;
 	angle = ang;
 	threshold = thresh;
 	max_dist = max_d;
+	mult_term = mult_t;
+	max_area = max_a;
 
 	num_droplets = total/per;
 }
 
-__global__ void check_stop(int *stopped, float *spikes, float *cen_x, float *cen_y)
+__global__ void check_stop(float *spikes, float *max_len, float *cen_x, float *cen_y)
 {	
-	
-	/* Calculate points */
-
 	const int i = blockDim.x*blockIdx.x + threadIdx.x;
 	const int num = (i - (i % per_droplet)) / per_droplet;
+
+	spikes[i] = 0.0001;
+	areas[i] = 0.0001;
+	stopped[i] = 0;
 
 	const float c_x = cen_x[num];
 	const float c_y = cen_y[num];
 	center_x[num] = c_x;
 	center_y[num] = c_y;
 	float dist, v_x, v_y;
+	float area, step;
 
-	const float x_i = spikes[i] * cos(angle * i) + c_x;
-	const float y_i = spikes[i] * sin(angle * i) + c_y;
+	int n = 0;
+	while (n<50){
+		n += 1;
 
-	x_coords[i] = x_i;
-	y_coords[i] = y_i;
+		__syncthreads();
 
-	__syncthreads();
-
-	/*
-		Check all droplets with a larger id (check each spike only once)
-			if other center within square of length 2 * max_dist around own center
-				find closest spike
-
-		If closer than threshold: stop spike
-	*/
-
-	for(int m = num + 1; m < num_droplets; m++) {
-		if (abs(center_x[m] - c_x) < max_dist && abs(center_y[m] - c_y) < max_dist){
-			for(int n = m * per_droplet; n < (m + 1) * per_droplet; n++) {
-				v_x = x_coords[n] - x_i;
-				v_y = y_coords[n] - y_i;
-				dist = sqrt(v_x * v_x + v_y * v_y);
-				if (dist < threshold){
-					stopped[i] = 1;
-					stopped[n] = 1;
-				};
-			};
+		/* recalculate area */
+		area = 0.0;
+		int last = (num+1)*per_droplet;
+		int other = last;
+		for (int index=num*per_droplet;index<last;index++){
+			area += spikes[index] * spikes[other] * mult_term;
+			other = index;
 		};
 		
+		if (spikes[i] < max_len[i] && stopped[i] == 0 && area < max_area){
+			step = 2.5 * (max_area - area) / max_area;
+			if (step < 0.5){
+				step = 0.5;
+			}
+			spikes[i] += step;
+		}
+
+		/* Calculate points */
+		const float x_i = spikes[i] * cos(angle * i) + c_x;
+		const float y_i = spikes[i] * sin(angle * i) + c_y;
+
+		x_coords[i] = x_i;
+		y_coords[i] = y_i;
+
+		__syncthreads();
+
+		/*
+			Check all droplets with a larger id (check each spike only once)
+				if other center within square of length 2 * max_dist around own center
+					find closest spike
+
+			If closer than threshold: stop spike
+		*/
+
+		for(int m = num + 1; m < num_droplets; m++) {
+			if (abs(center_x[m] - c_x) < max_dist && abs(center_y[m] - c_y) < max_dist){
+				for(int n = m * per_droplet; n < (m + 1) * per_droplet; n++) {
+					v_x = x_coords[n] - x_i;
+					v_y = y_coords[n] - y_i;
+					dist = sqrt(v_x * v_x + v_y * v_y);
+					if (dist < threshold){
+						stopped[i] = 1;
+						stopped[n] = 1;
+					};
+				};
+			};
+			
+		};
+
 	};
+	/*
+	spikes_out = spikes; 
+	*/
+
+	
 }
 '''
 
@@ -104,8 +141,11 @@ class DropletAnimation(object):
 
 		self._stopped = np.zeros_like(self._spikes).astype(np.int32)
 
-		self._collision_threshold = np.float32(3.0)
+		self._collision_threshold = np.float32(4.5)
 		self._max_dist_droplet = np.float32(150.0)
+		self._mult_term_r = np.float32(math.sin(self._angle) * 0.5)
+		self._max_area = np.float32(self.area)
+
 		self.per_droplet = num_spikes
 		self._per_droplet = np.int32(num_spikes)
 
@@ -136,7 +176,7 @@ class DropletAnimation(object):
 
 		# Setup the constants
 		self._init_memory_raw(self._per_droplet, self._total_spikes, np.float32(self._angle),
-				self._collision_threshold, self._max_dist_droplet,
+				self._collision_threshold, self._max_dist_droplet, self._mult_term_r, self._max_area,
 				grid = (1,1), block = (1,1,1)
 				)
 
@@ -189,17 +229,13 @@ class DropletAnimation(object):
 		c_x = drv.In(self._centers[:, 0].astype(np.float32))
 		c_y = drv.In(self._centers[:, 1].astype(np.float32))
 
-		while n > min_val and num < 150:
-			n = self.move_up_spikes(areas)
-			areas = self.get_areas()
+		spikes_out = np.zeros_like(self._spikes)
+		self._check_stop_raw(
+			drv.Out(spikes_out), drv.In(self._max_dist.astype(np.float32)), 
+			c_x, c_y, grid = self._spikes_grid, block = self._spikes_block,
+			)
 
-			# check for collision with other droplet (pycuda)
-			self._check_stop_raw(
-				drv.InOut(self._stopped), drv.In(self._spikes.astype(np.float32)), 
-				c_x, c_y, grid = self._spikes_grid, block = self._spikes_block,
-				)
-
-			num += 1
+		self._spikes[:] = spikes_out
 
 	def reset_max_dist(self):
 		'''
@@ -331,13 +367,11 @@ def start_simulation(size, barriers, centers, area, direction = (3, 0), relax = 
 		#s = d.stress_vector(1)
 		#vect = round(math.sqrt((s[0] - c[0]) ** 2 + (s[1] - c[1]) ** 2), 1)
 
-		'''
 		text = str(int(fpsClock.get_fps())) + ' fps'
 		label = font.render(text, 1, black)
 		rect = label.get_rect()
 		rect.center = (size[0]/2, 20)
 		window.blit(label, rect)
-		'''
 
 		#Handle events (single press, not hold)
 		for event in pygame.event.get():
@@ -378,7 +412,7 @@ if __name__ == '__main__':
 
 	#start_point = (size[0]/8, 200)
 	direction = (2, 0)
-	relax = 1.5
+	relax = 2.5
 	area = 7000.
 	num_spikes = 50
 	max_dist = 200
