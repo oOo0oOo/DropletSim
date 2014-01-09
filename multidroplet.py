@@ -9,9 +9,10 @@ from pygame.locals import QUIT, KEYDOWN, K_LEFT, K_RIGHT, K_UP, K_DOWN
 
 # The PyCUDA stuff
 import pycuda.driver as drv
-import pycuda.autoinit
 from pycuda.compiler import SourceModule
+#import pycuda.autoinit
 
+import flow
 
 c_source = r'''
 
@@ -78,14 +79,15 @@ __global__ void check_stop(int *stopped, float *spikes, float *cen_x, float *cen
 }
 '''
 
-# The Cython speedup
+# The Cython speedups
 from c_code import distance, find_max_dist, get_areas
 
 class DropletAnimation(object):
-	def __init__(self, barriers, centers = [[100, 100], [300, 600], [700, 100]], num_spikes = 50, area = 7000, max_dist = 100):
+	def __init__(self, barriers, centers = [[100, 100], [300, 600], [700, 100]], num_spikes = 50, area = 7000, max_dist = 100, velocity = False):
 		self.num_spikes = num_spikes
 		self.area = area
 		self.max_len_spike = max_dist
+		self.velocity = velocity
 
 		self._angle = math.radians(360. / self.num_spikes)
 		self._mult_term = np.array([math.sin(self._angle) * 0.5])
@@ -234,7 +236,25 @@ class DropletAnimation(object):
 
 
 	def move_relax(self, t, ratio):
-		self._centers += t
+		total = np.zeros_like(self.velocity)
+		size = self.velocity.shape[1:]
+		for i in range(self._centers.shape[0]):
+			p = self._centers[i]
+			if np.all(p > (0,0)) and np.all(p < size):
+				p = p.astype(np.int)
+				self._centers[i, 0] += self.velocity[0, p[0], p[1]]
+				self._centers[i, 1] += self.velocity[1, p[0], p[1]]
+
+			else:
+				self._centers[i] += t
+
+		#on_screen = np.array([on_screen1, on_screen2])
+		#off_screen = np.logical_not(on_screen)
+
+
+		#v = self.velocity[coord]
+		#print v.shape, v
+		
 		self._centers += self.stress_vectors(ratio)
 
 		self.reset_max_dist()
@@ -280,6 +300,19 @@ def start_simulation(size, barriers, centers, area, direction = (3, 0), relax = 
 			os.makedirs(capture_folder)
 	
 	pygame.init()
+
+	# Render Walls
+	#flow.render_barriers(barriers, size)
+	#flow.run_simulation()
+	velocity = np.load('velocity.npy')
+	velocity *= 100
+
+	t0 = velocity[0].transpose()
+	t1 = velocity[1].transpose()
+	velocity = np.array([t0, t1])
+
+	import pycuda.autoinit
+
 	font = pygame.font.SysFont('helvetica', 25)
 
 	fpsClock = pygame.time.Clock()
@@ -292,7 +325,7 @@ def start_simulation(size, barriers, centers, area, direction = (3, 0), relax = 
 	red = pygame.Color(245, 10, 10)
 
 	d = DropletAnimation(barriers = barriers, centers = centers, num_spikes = num_spikes, 
-		max_dist = max_dist, area = area)
+		max_dist = max_dist, area = area, velocity = velocity)
 
 	# The animation loop
 	frame = 0
@@ -316,7 +349,7 @@ def start_simulation(size, barriers, centers, area, direction = (3, 0), relax = 
 
 		num = len(shapes[0][0])
 		for j, (x, y) in enumerate(shapes):
-			if areas[j] * 1.1 >= area:
+			if areas[j] * 1.05 >= area:
 				color = blue
 			else:
 				color = red
@@ -331,13 +364,11 @@ def start_simulation(size, barriers, centers, area, direction = (3, 0), relax = 
 		#s = d.stress_vector(1)
 		#vect = round(math.sqrt((s[0] - c[0]) ** 2 + (s[1] - c[1]) ** 2), 1)
 
-		'''
 		text = str(int(fpsClock.get_fps())) + ' fps'
 		label = font.render(text, 1, black)
 		rect = label.get_rect()
 		rect.center = (size[0]/2, 20)
 		window.blit(label, rect)
-		'''
 
 		#Handle events (single press, not hold)
 		for event in pygame.event.get():
@@ -349,7 +380,7 @@ def start_simulation(size, barriers, centers, area, direction = (3, 0), relax = 
 
 		frame += 1
 
-		if capture_folder != '':
+		if capture_folder:
 			pygame.image.save(window, '{}/{}.jpg'.format(capture_folder, frame))
 
 		fpsClock.tick(max_fps)
@@ -378,14 +409,14 @@ if __name__ == '__main__':
 
 	#start_point = (size[0]/8, 200)
 	direction = (2, 0)
-	relax = 1.5
+	relax = 2.5
 	area = 7000.
-	num_spikes = 50
-	max_dist = 200
+	num_spikes = 75
+	max_dist = 250
 	max_fps = 500
-	num_droplets = 50
+	num_droplets = 40
 	n = -1
 
 	centers = [[-random.randrange(0, 20*num_droplets), random.randrange(80, size[1]-80)] for i in range(num_droplets)]
 
-	start_simulation(size, barriers, centers, area, direction = direction, num_frames = n)
+	start_simulation(size, barriers, centers, area, direction = direction, num_frames = n, max_dist = max_dist, num_spikes = num_spikes, relax = relax)
