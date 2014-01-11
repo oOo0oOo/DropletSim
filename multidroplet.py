@@ -236,17 +236,20 @@ class DropletAnimation(object):
 
 
 	def move_relax(self, t, ratio):
-		total = np.zeros_like(self.velocity)
-		size = self.velocity.shape[1:]
-		for i in range(self._centers.shape[0]):
-			p = self._centers[i]
-			if np.all(p > (0,0)) and np.all(p < size):
-				p = p.astype(np.int)
-				self._centers[i, 0] += self.velocity[0, p[0], p[1]]
-				self._centers[i, 1] += self.velocity[1, p[0], p[1]]
+		if type(self.velocity) != bool:
+			total = np.zeros_like(self.velocity)
+			size = self.velocity.shape[1:]
+			for i in range(self._centers.shape[0]):
+				p = self._centers[i]
+				if np.all(p > (0,0)) and np.all(p < size):
+					p = p.astype(np.int)
+					self._centers[i, 0] += self.velocity[0, p[0], p[1]]
+					self._centers[i, 1] += self.velocity[1, p[0], p[1]]
 
-			else:
-				self._centers[i] += t
+				else:
+					self._centers[i] += t
+		else:
+			self._centers += t
 
 		#on_screen = np.array([on_screen1, on_screen2])
 		#off_screen = np.logical_not(on_screen)
@@ -292,7 +295,7 @@ def intify(tup):
 	return [int(tup[0]), int(tup[1])]
 
 def start_simulation(size, barriers, centers, area, direction = (3, 0), relax = 1.0,
-	num_spikes = 100, max_dist = 200, max_fps = 500, num_frames = -1, capture_folder = ''):
+	num_spikes = 100, max_dist = 200, max_fps = 500, num_frames = -1, capture_folder = '', flow = False):
 
 	if capture_folder != '':
 		import os
@@ -304,12 +307,29 @@ def start_simulation(size, barriers, centers, area, direction = (3, 0), relax = 
 	# Render Walls
 	#flow.render_barriers(barriers, size)
 	#flow.run_simulation()
-	velocity = np.load('velocity.npy')
-	velocity *= 100
 
-	t0 = velocity[0].transpose()
-	t1 = velocity[1].transpose()
-	velocity = np.array([t0, t1])
+	velocity_map = pygame.Surface(size)
+	velocity_map.fill(pygame.Color(245, 245, 245))
+
+	if flow:
+		velocity = np.load('velocity.npy')
+		velocity *= 125
+
+		t0 = velocity[0].transpose()
+		t1 = velocity[1].transpose()
+		velocity = np.array([t0, t1])
+
+		# Create velocity image
+		v = pygame.surfarray.pixels3d(velocity_map)
+
+		absolute = np.sqrt(np.square(t0) + np.square(t1))
+		relative = absolute / np.max(absolute)
+		v *= relative[:, :, np.newaxis]
+
+		velocity_map = pygame.surfarray.make_surface(v)
+	else:
+		velocity = False
+
 
 	import pycuda.autoinit
 
@@ -333,11 +353,11 @@ def start_simulation(size, barriers, centers, area, direction = (3, 0), relax = 
 		# Update agents
 		d.move_relax(direction, relax)
 
-		window.fill(white)
+		window.blit(velocity_map,  (0,0))
 
 		# Draw all barriers
 		for p1, p2 in barriers:
-			pygame.draw.aaline(window, black, p1, p2, 1)
+			pygame.draw.aaline(window, red, p1, p2, 1)
 
 		# Draw center points, centroid & stress vector
 		for x, y in d._centers:
@@ -408,7 +428,7 @@ if __name__ == '__main__':
 	]
 
 	#start_point = (size[0]/8, 200)
-	direction = (2, 0)
+	direction = (0.5, 0)
 	relax = 2.5
 	area = 7000.
 	num_spikes = 75
@@ -419,4 +439,4 @@ if __name__ == '__main__':
 
 	centers = [[-random.randrange(0, 20*num_droplets), random.randrange(80, size[1]-80)] for i in range(num_droplets)]
 
-	start_simulation(size, barriers, centers, area, direction = direction, num_frames = n, max_dist = max_dist, num_spikes = num_spikes, relax = relax)
+	start_simulation(size, barriers, centers, area, direction = direction, num_frames = n, max_dist = max_dist, num_spikes = num_spikes, relax = relax, flow=True)

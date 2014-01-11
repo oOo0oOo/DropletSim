@@ -102,6 +102,7 @@ class ExternalSimulation(LBFluidSim, LBForcedSim):
         s = runner._sim
         velocity = np.array([s.vx, s.vy])
         # File detour (global was acting weird)
+        print velocity
         np.save('velocity', velocity)
 
 def run_simulation():
